@@ -23,6 +23,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     DRAW_INTERROBOT = static_cast<bool>((int)j["DRAW_INTERROBOT"]);
     DRAW_PATH = static_cast<bool>((int)j["DRAW_PATH"]);
     DRAW_WAYPOINTS = static_cast<bool>((int)j["DRAW_WAYPOINTS"]);
+    DRAW_FACTORS = static_cast<bool>((int)j.value("DRAW_FACTORS", 0));
 
     // Simulation parameters
     SEED = j["SEED"];
@@ -30,6 +31,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     MAX_TIME = j["MAX_TIME"];
     NUM_ROBOTS = j["NUM_ROBOTS"];
     T_HORIZON = j["T_HORIZON"];
+    MAX_HORIZON_DIST = j.value("MAX_HORIZON_DIST", 15);
     ROBOT_RADIUS = j["ROBOT_RADIUS"];
     COMMUNICATION_RADIUS = j["COMMUNICATION_RADIUS"];
     MAX_SPEED = j["MAX_SPEED"];
@@ -43,6 +45,12 @@ void Globals::parse_global_args(std::ifstream& config_file){
     SIGMA_FACTOR_OBSTACLE = j["SIGMA_FACTOR_OBSTACLE"];
     NUM_ITERS = j["NUM_ITERS"];
 
+    // Dynamic Obstacle parameters
+    SIGMA_FACTOR_DYNAMIC_OBSTACLE = j.value("SIGMA_FACTOR_DYNAMIC_OBSTACLE", 0.05);
+    NEW_OBSTACLES_NEEDED = static_cast<bool>((int)j.value("NEW_OBSTACLES_NEEDED", 1));
+    ITERATE_STEPS = j.value("ITERATE_STEPS", 1);
+    RBF_GAMMA = j.value("RBF_GAMMA", 1.0);
+    NUM_NEIGHBOURS = j.value("NUM_NEIGHBOURS", 1);
 }
 
 Globals::Globals(){};

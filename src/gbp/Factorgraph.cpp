@@ -72,4 +72,70 @@ void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
         // Update variable belief and create outgoing messages
         var->update_belief();
     };
-;}
+}
+
+void FactorGraph::print_graph_info() {
+    static std::vector<std::string> fac_type_names{"DEFAULT", "DYNAMICS", "INTERROBOT", "OBSTACLE", "DYNAMIC OBSTACLE"};
+
+    std::ostringstream oss;
+    // oss << std::fixed << std::setprecision(3);
+    oss << std::scientific << std::setprecision(6);
+
+    oss << "RID: " << robot_id_ << "\n";
+    
+    for (const auto& [v_key, var] : variables_) {
+        std::map<Key, Eigen::VectorXd> grads;
+        std::map<Key, double> mags;
+        double sum_mag = 0.0;
+
+        // Compute gradients and magnitudes
+        for (auto& [f_key, msg] : var->inbox_) {
+            // Check if inbox factor still exists
+            if (this->factors_.find(f_key) == this->factors_.end()) continue;
+            
+            const auto& [eta_i, Lambda_i, _] = msg;
+            
+            Eigen::VectorXd g_i     = Lambda_i * var->mu_ - eta_i;
+            double mag              = g_i.norm();
+        
+            grads[f_key] = std::move(g_i);
+            mags[f_key]  = mag;
+            sum_mag     += mag;
+        }
+        
+        oss << "Var " << var->v_id_ << ", ts: " << var->ts_ << "\n";
+        
+        // Print normalised gradient directions and magnitudes
+        for (auto& [f_key, g_i] : grads) {
+            auto fac = this->factors_[f_key];
+            double mag   = mags[f_key];
+            double score = (sum_mag > 0.0 ? mag / sum_mag : 0.0);
+        
+            Eigen::VectorXd dir = (mag > 0.0
+                ? Eigen::VectorXd(grads[f_key] / mag)
+                : Eigen::VectorXd::Zero(var->mu_.size()));
+        
+            // Customise factor name printing
+            auto fac_type = fac->factor_type_;
+            std::ostringstream fac_name;
+            fac_name << "    " << fac_type_names[fac_type];
+            if (fac_type == DYNAMICS_FACTOR) {
+                auto vars = fac->variables_;
+                if (vars.size() < 2) {
+                    print("Var size error", fac_type);
+                    return;
+                }
+                fac_name << " (" << vars[0]->v_id_ << "-" << vars[1]->v_id_ << ")";
+            }
+
+            // Output
+            oss << fac_name.str() << ": " << "score=" << score << "  dir=[";
+            for (int i = 0; i < dir.size(); ++i) {
+                if (i) oss << ", ";
+                oss << dir[i];
+            }
+            oss << "]\n";
+        }
+    }
+    print(oss.str());
+}

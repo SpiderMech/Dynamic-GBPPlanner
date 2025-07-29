@@ -20,7 +20,10 @@
 #include <KDTreeMapOfVectorsAdaptor.h>
 #include <random>
 
+#include "cnpy/cnpy.h"
+
 class Robot;
+class DynamicObstacle;
 class Graphics;
 class TreeOfRobots;
 
@@ -47,15 +50,26 @@ public:
 
     // Image representing the obstacles in the environment
     Image obstacleImg;
+    cnpy::NpyArray obstacleSDF;
+    cnpy::NpyArray obstacleJacX;
+    cnpy::NpyArray obstacleJacY;
+    float* sdf_ptr = nullptr;
+    float* jacx_ptr = nullptr;
+    float* jacy_ptr = nullptr;
+    bool has_sdf  = false;
+    bool has_jac  = false;
 
-    int next_rid_ = 0;                              // New robots will use this rid. It should be ++ incremented when this happens
-    int next_vid_ = 0;                              // New variables will use this vid. It should be ++ incremented when this happens
-    int next_fid_ = 0;                              // New factors will use this fid. It should be ++ incremented when this happens
-    uint32_t clock_ = 0;                            // Simulation clock (timesteps)                   
-    std::map<int, std::shared_ptr<Robot>> robots_;  // Map containing smart pointers to all robots, accessed by their rid.
-    bool new_robots_needed_ = true;                 // Whether or not to create new robots. (Some formations are dynamicaly changing)
-    bool symmetric_factors = false;                 // If true, when inter-robot factors need to be created between two robots,
-                                                    // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
+    int next_rid_ = 0;                                           // New robots will use this rid. It should be ++ incremented when this happens
+    int next_vid_ = 0;                                           // New variables will use this vid. It should be ++ incremented when this happens
+    int next_fid_ = 0;                                           // New factors will use this fid. It should be ++ incremented when this happens
+    int next_oid_ = 0;                                           // New dynamic obstacles will use this oid. It should be ++ incremented when this happens
+    uint32_t clock_ = 0;                                         // Simulation clock (timesteps)                   
+    std::map<int, std::shared_ptr<Robot>> robots_;               // Map containing smart pointers to all robots, accessed by their rid.
+    std::map<int, std::shared_ptr<DynamicObstacle>> obstacles_;  // Map containing smart pointers to all robots, accessed by their rid.
+    bool new_robots_needed_ = true;                              // Whether or not to create new robots. (Some formations are dynamicaly changing)
+    bool new_obstacles_needed_ = true;                           // Whether or not to create new obstacles. (Some formations are dynamicaly changing)
+    bool symmetric_factors = false;                              // If true, when inter-robot factors need to be created between two robots,
+                                                                 // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
 
 
     /*******************************************************************************/
@@ -64,6 +78,12 @@ public:
     // by appending (push_back()) a shared pointer to a Robot class.
     /*******************************************************************************/    
     void createOrDeleteRobots();
+
+    /*******************************************************************************/
+    // Create new dynamic (moving/static) obstacles. Handles deletion of obstacles out of bounds. 
+    // Works in a similar fashion to robot creation and deletion, but for dynamic obstacles.
+    /*******************************************************************************/    
+    void createOrDeleteObstacles();
 
     /*******************************************************************************/
     // Set a proportion of robots to not perform inter-robot communications

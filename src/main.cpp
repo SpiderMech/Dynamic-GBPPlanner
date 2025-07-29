@@ -25,6 +25,7 @@ int main(int argc, char *argv[]){
     while (globals.RUN){
 
         sim->eventHandler();                // Capture keypresses or mouse events             
+        sim->createOrDeleteObstacles();
         sim->createOrDeleteRobots();        
         sim->timestep();
         sim->draw();

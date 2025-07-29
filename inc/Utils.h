@@ -39,3 +39,15 @@ auto since(std::chrono::time_point<clock_t, duration_t> const& start)
 {
     return std::chrono::duration_cast<result_t>(clock_t::now() - start);
 }
+
+
+/*******************************************************************************************/
+// Non-linear function for determining the timesteps at which variables in the planned path are placed.
+/*******************************************************************************************/
+std::vector<int> getVariableTimesteps(int lookahead_horizon, int lookahead_multiple);
+
+/*******************************************************************************************/
+// Lineaer function for determining the timesteps at which variables in the planned path are placed.
+/*******************************************************************************************/
+std::vector<int> getLinearVariableTimesteps(int lookahead_horizon);
+

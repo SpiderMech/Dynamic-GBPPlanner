@@ -74,9 +74,13 @@ void main()
         }
     }
 
-    finalColor = (texelColor*((colDiffuse + vec4(specular, 1.0))*vec4(lightDot, 1.0)));
-    finalColor += texelColor*(ambient/10.0)*colDiffuse;
+    // finalColor = (texelColor*((colDiffuse + vec4(specular, 1.0))*vec4(lightDot, 1.0)));
+    // finalColor += texelColor*(ambient/10.0)*colDiffuse;
+    vec3 litRGB = texelColor.rgb * ((colDiffuse.rgb + specular) * lightDot) + texelColor.rbg * (ambient.rgb * 0.1) * colDiffuse.rgb;
+    float outAlpha = colDiffuse.a;
 
     // Gamma correction
-    finalColor = pow(finalColor, vec4(1.0/2.2));
+    vec3 gammaRGB = pow(litRGB, vec3(1.0/2.2));
+    // finalColor = pow(finalColor, vec4(1.0/2.2));
+    finalColor = vec4(gammaRGB, outAlpha);
 }

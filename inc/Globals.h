@@ -35,6 +35,8 @@ class Globals {
     bool DRAW_INTERROBOT;                                   // Toggle display of inter-robot connections
     bool DRAW_PATH;                                         // Toggle display of planned paths
     bool DRAW_WAYPOINTS;                                    // Toggle display of path planning goals
+    bool DRAW_FACTORS;                                      // Toggle display of factors
+    bool DRAW_OBSTACLES = true;                             // Toggle display of obstacles
     
     // Simulation parameters
     int SEED;                                               // Random Seed 
@@ -42,12 +44,13 @@ class Globals {
     int MAX_TIME;                                           // Exit simulation if more timesteps than this
     int NUM_ROBOTS;                                         // Number of robots (if no new robots are to be added)
     float T_HORIZON;                                        // Planning horizon [s]
+    float MAX_HORIZON_DIST;                                 // [m]. Maximum distance the horizon state can be away from current state.
     float ROBOT_RADIUS;                                     // [m]
     float COMMUNICATION_RADIUS;                             // [m] Inter-robot factors created if robots are within this range of each other
     float MAX_SPEED;                                        // [m/s]
     float COMMS_FAILURE_RATE;                               // Proportion of robots [0,1] that do not communicate
     int LOOKAHEAD_MULTIPLE = 3;                             // Parameter affecting how planned path is spaced out in time
-    std::string FORMATION;                                    // Robot formation (CIRCLE or JUNCTION)
+    std::string FORMATION;                                  // Robot formation (CIRCLE or JUNCTION)
     float T0;                                               // Time between current state and next state of planned path
 
     // GBP parameters
@@ -57,6 +60,13 @@ class Globals {
     float SIGMA_FACTOR_OBSTACLE;                            // Sigma for Static obstacle factors
     int NUM_ITERS;                                          // Number of iterations of GBP per timestep
     float DAMPING = 0.;                                     // Damping amount (not used in this work)
+
+    // Dynamic Obstacle parameters
+    float SIGMA_FACTOR_DYNAMIC_OBSTACLE;                    // Sigma for Dynamic obstacle factors
+    bool NEW_OBSTACLES_NEEDED;                              // Whether to generate new obstacles
+    int ITERATE_STEPS;                                      // Number of ticks before pausing when in Iterate mode.
+    double RBF_GAMMA;                                       // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
+    int NUM_NEIGHBOURS;                                     // Number of RBFs to combine for Dynamics Obstacle Factor
     
     Globals();
     int parse_global_args(DArgs::DArgs& dargs);

@@ -36,10 +36,11 @@ class Variable {
         bool valid_ = false;                                // Flag whether variable's covariance is finite
         std::map<Key, std::shared_ptr<Factor>> factors_{};  // Map of factors connected to the variable, accessed by their key
         float size_;                                        // Size of variable (usually taken from robot->robot_radius)
+        int ts_;                                            // Timestep the robot pose variable represents.
         std::function<void()> draw_fn_ = NULL;              // Space for custom draw function of variable. Usually robot->draw() supercedes this
 
         // Function declarations
-        Variable(int v_id, int r_id, const Eigen::VectorXd& mu_prior, const Eigen::VectorXd& sigma_prior_list, float size, int n_dofs=4);
+        Variable(int v_id, int r_id, const Eigen::VectorXd& mu_prior, const Eigen::VectorXd& sigma_prior_list, float size, int n_dofs=4, int ts=0);
         
         ~Variable();
 

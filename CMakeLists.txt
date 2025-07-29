@@ -6,6 +6,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose Release or Debug" FORCE)
 endif()
 
+# unset(CMAKE_C_COMPILER CACHE)
+# unset(CMAKE_CXX_COMPILER CACHE)
 # Name of Project
 project(GBPPlanner)
 add_compile_definitions(EIGEN_DONT_PARALLELIZE)
@@ -18,6 +20,7 @@ add_library(gbp STATIC
     src/gbp/Variable.cpp 
     src/gbp/Factorgraph.cpp 
     src/gbp/Factor.cpp 
+    thirdparty/cnpy/cnpy.cpp
 )
 target_compile_definitions(gbp PUBLIC ASSETS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/")
 target_include_directories(gbp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
@@ -29,7 +32,8 @@ add_executable(gbpplanner
     src/Robot.cpp
     src/Simulator.cpp
     src/Utils.cpp 
-    src/Graphics.cpp 
+    src/Graphics.cpp
+    src/DynamicObstacle.cpp
 )
 target_link_libraries(gbpplanner PUBLIC gbp)
 

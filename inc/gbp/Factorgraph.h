@@ -48,4 +48,5 @@ class FactorGraph {
         return variables_[v_key];
     }
 
+    void print_graph_info();
 };

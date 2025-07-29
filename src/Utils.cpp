@@ -10,6 +10,50 @@
 #include <Globals.h>
 extern Globals globals;
 
+/*******************************************************************************************/
+// Non-linear function for determining the timesteps at which variables in the planned path are placed.
+/*******************************************************************************************/
+std::vector<int> getVariableTimesteps(int lookahead_horizon, int lookahead_multiple)
+{
+    // For a lookahead_multiple of 3, variables are spaced at timesteps:
+    // Timesteps
+    // 0,    1, 2, 3,    5, 7, 9,    12, 15, 18, ...
+    //
+    // eg. variables are in groups of size lookahead_multiple.
+    // the spacing within a group increases by one each time (1 for the first group, 2 for the second ...)
+    // Seems convoluted, but the reasoning was:
+    //      the first variable should always be at 1 timestep from the current state (0).
+    //      the first few variables should be close together in time
+    //      the variables should all be at integer timesteps, but the spacing should sort of increase exponentially.
+    std::vector<int> var_list{};
+    int N = 1 + int(0.5 * (-1 + sqrt(1 + 8 * (float)lookahead_horizon / (float)lookahead_multiple)));
+
+    for (int i = 0; i < lookahead_multiple * (N + 1); i++)
+    {
+        int section = int(i / lookahead_multiple);
+        int f = (i - section * lookahead_multiple + lookahead_multiple / 2. * section) * (section + 1);
+        if (f >= lookahead_horizon)
+        {
+            var_list.push_back(lookahead_horizon);
+            break;
+        }
+        var_list.push_back(f);
+    }
+
+    return var_list;
+}
+
+/*******************************************************************************************/
+// Lineaer function for determining the timesteps at which variables in the planned path are placed.
+/*******************************************************************************************/
+std::vector<int> getLinearVariableTimesteps(int lookahead_horizon)
+{
+    std::vector<int> var_list{};
+    for (int i = 0; i < lookahead_horizon; ++i)
+        var_list.push_back(i);
+    return var_list;
+}
+
 /**************************************************************************************/
 // Draw the Time and FPS, as well as the help box
 /**************************************************************************************/
@@ -44,6 +88,7 @@ void draw_info(uint32_t time_cnt){
             "P : \t\t\t\t\t\t Toggle Planned paths",
             "R : \t\t\t\t\t\t Toggle Connected Robots",
             "W : \t\t\t\t\t\t Toggle Waypoints",
+            "F : \t\t\t\t\t\t Toggle Factors",
             ""         ,
             "Mouse Wheel Scroll : Zoom",
             "Mouse Wheel Drag : Pan",

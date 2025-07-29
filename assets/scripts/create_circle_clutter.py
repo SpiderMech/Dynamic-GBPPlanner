@@ -15,16 +15,24 @@ OBSTACLE_COLOR = (0,0,0)
 img = 255*np.ones((1000, 1000, 3), dtype = np.uint8)
 
 # Create Obstacle shapes
+print("triangles")
 triangles = [[(380, 410), (355, 423), (410, 454)],
              [(527, 492), (527, 540), (602, 510)]]
 for t in triangles:
+    for p in t:
+        print(tuple(int(i / 10 - 50) for i in p), end=", ")
+    print()
     cv2.fillPoly(img, np.array([t]), OBSTACLE_COLOR)
 
+print("rectangles")
 rectangles = [[(573, 366), (603, 426)],
              [(420, 550), (460, 590)],
              [(600,575), (650,625)],
              [(468, 412), (498, 442)]]
 for r in rectangles:
+    for p in r:
+        print(tuple(int(i / 10 - 50) for i in p), end=", ")
+    print()
     cv2.rectangle(img, r[0], r[1], OBSTACLE_COLOR, -1)
 
 # Create distance field
