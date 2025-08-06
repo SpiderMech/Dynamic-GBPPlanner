@@ -5,9 +5,9 @@
   "#": "Display parameters",
   "DISPLAY": 1,
   "WORLD_SZ": 100,
-  "SCREEN_SZ": 1000,
+  "SCREEN_SZ": 800,
   "DRAW_INTERROBOT": 0,
-  "DRAW_PATH": 0,
+  "DRAW_PATH": 1,
   "DRAW_WAYPOINTS": 0,
   "DRAW_FACTORS": 0,
   

@@ -47,6 +47,13 @@ public:
     Image* p_obstacleImage;                     // Pointer to image representing the obstacles in the environment
     float height_3D_ = 0.f;                     // Height out of plane (for 3d visualisation only)
     Eigen::VectorXd position_;                  // Position of the robot (equivalent to taking the [x,y] of the current state of the robot)
+    
+    // Task/pause timer functionality
+    float task_timer_ = 0.f;                    // Countdown timer for task completion [seconds]
+    bool next_wp_is_task_ = false;              // Flag indicating if robot is performing a task
+    bool task_active_ = false;                  // Flag indicating if horizon has reached task waypoint
+    int current_task_id_ = -1;                  // Optional: ID of current task being performed
+    Key attractive_factor_key_ = Key(-1, -1);   // Key of the current attractive factor (if any)
 
     /****************************************/
     //Functions
@@ -72,6 +79,7 @@ public:
     void updateDynamicObstacleFactors();
     void createDynamicObstacleFactors(std::shared_ptr<DynamicObstacle> obs);
     void deleteDynamicObstacleFactors(int oid);
+    double getDistToObs(std::shared_ptr<DynamicObstacle> obs);
 
     /***************************************************************************************************/    
     // Drawing function

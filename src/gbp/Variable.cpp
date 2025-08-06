@@ -4,6 +4,7 @@
 /**************************************************************************************/
 #include <Eigen/Core>
 #include <Eigen/Dense>
+#include <Eigen/Cholesky>
 #include <raylib.h>
 #include <vector>
 #include <math.h>
@@ -35,6 +36,17 @@ Variable::Variable(int v_id, int r_id, const Eigen::VectorXd &mu_prior, const Ei
 };
 
 /***********************************************************************************************************/
+// Initialize working memory for Cholesky optimization
+/***********************************************************************************************************/
+void Variable::initialize_work_memory() const
+{
+    if (!work_memory_initialized_) {
+        work_identity_ = Eigen::MatrixXd::Identity(n_dofs_, n_dofs_);
+        work_memory_initialized_ = true;
+    }
+}
+
+/***********************************************************************************************************/
 // Destructor: deletes all connected factors too
 /***********************************************************************************************************/
 Variable::~Variable()
@@ -63,11 +75,33 @@ void Variable::update_belief()
         eta_ += eta_msg;
         lam_ += lam_msg;
     }
-    // Update belief
-    sigma_ = lam_.inverse();
-    valid_ = sigma_.allFinite();
-    if (valid_)
-        mu_ = sigma_ * eta_;
+    // Update belief using Cholesky decomposition for efficiency with pre-allocated working memory
+    initialize_work_memory();
+    
+    // Use pre-allocated LLT solver for positive definite matrices
+    llt_solver_.compute(lam_);
+    
+    if (llt_solver_.info() == Eigen::Success) {
+        // Successfully decomposed - solve for mu and sigma using pre-allocated identity
+        mu_ = llt_solver_.solve(eta_);
+        sigma_ = llt_solver_.solve(work_identity_);
+        valid_ = true;
+    } else {
+        // Fallback to pre-allocated LDLT for indefinite matrices or numerical issues
+        ldlt_solver_.compute(lam_);
+        
+        if (ldlt_solver_.info() == Eigen::Success && ldlt_solver_.isPositive()) {
+            mu_ = ldlt_solver_.solve(eta_);
+            sigma_ = ldlt_solver_.solve(work_identity_);
+            valid_ = sigma_.allFinite();
+        } else {
+            // Final fallback to direct inverse for problematic cases
+            sigma_ = lam_.inverse();
+            valid_ = sigma_.allFinite();
+            if (valid_)
+                mu_ = sigma_ * eta_;
+        }
+    }
     belief_ = Message{eta_, lam_, mu_};
 
     // Create message to send to each factor that sent it stuff

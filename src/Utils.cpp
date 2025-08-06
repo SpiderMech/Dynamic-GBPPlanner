@@ -101,4 +101,14 @@ void draw_info(uint32_t time_cnt){
     }
 }
 
+/***************************************************************************************************************/
+// RANDOM NUMBER GENERATORS
+/***************************************************************************************************************/
+int random_int(int lower, int upper) {
+    return std::uniform_int_distribution<int>(lower, upper)(rng);
+}
+
+float random_float(float lower, float upper){
+    return std::uniform_real_distribution<float>(lower, upper)(rng);
+}
 

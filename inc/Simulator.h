@@ -18,7 +18,6 @@
 #include <rlights.h>
 #include <nanoflann.h>
 #include <KDTreeMapOfVectorsAdaptor.h>
-#include <random>
 
 #include "cnpy/cnpy.h"
 
@@ -115,22 +114,4 @@ public:
     // Deletes the robot from the simulator's robots_, as well as any variable/factors associated.
     /*******************************************************************************/
     void deleteRobot(std::shared_ptr<Robot> robot);
-
-    /***************************************************************************************************************/
-    // RANDOM NUMBER GENERATOR.
-    // Usage: random_number("normal", mean, sigma) or random_number("uniform", lower, upper)
-    /***************************************************************************************************************/
-    std::mt19937 gen_normal = std::mt19937(globals.SEED);
-    std::mt19937 gen_uniform = std::mt19937(globals.SEED);
-    std::mt19937 gen_uniform_int = std::mt19937(globals.SEED);
-    template<typename T>
-    T random_number(std::string distribution, T param1, T param2){
-        if (distribution=="normal") return std::normal_distribution<T>(param1, param2)(gen_normal);
-        if (distribution=="uniform") return std::uniform_real_distribution<T>(param1, param2)(gen_uniform);
-        return (T)0;
-    }
-    int random_int(int lower, int upper){
-        return std::uniform_int_distribution<int>(lower, upper)(gen_uniform_int);
-    }
-
 };

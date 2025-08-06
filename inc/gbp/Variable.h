@@ -14,6 +14,7 @@
 #include <raylib.h>
 #include <Eigen/Core>
 #include <Eigen/Dense>
+#include <Eigen/Cholesky>
 
 class Factor;    // Forward declaration
 /***********************************************************************************************************/
@@ -39,6 +40,16 @@ class Variable {
         int ts_;                                            // Timestep the robot pose variable represents.
         std::function<void()> draw_fn_ = NULL;              // Space for custom draw function of variable. Usually robot->draw() supercedes this
 
+    private:
+        // Working memory for Cholesky optimization to avoid repeated allocations
+        mutable Eigen::MatrixXd work_identity_;             // Pre-allocated identity matrix for solver
+        mutable Eigen::LLT<Eigen::MatrixXd> llt_solver_;    // Reusable LLT solver
+        mutable Eigen::LDLT<Eigen::MatrixXd> ldlt_solver_;  // Reusable LDLT solver
+        mutable bool work_memory_initialized_ = false;      // Flag to track initialization
+        
+        void initialize_work_memory() const;               // Initialize working memory
+
+    public:
         // Function declarations
         Variable(int v_id, int r_id, const Eigen::VectorXd& mu_prior, const Eigen::VectorXd& sigma_prior_list, float size, int n_dofs=4, int ts=0);
         

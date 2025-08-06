@@ -51,6 +51,8 @@ void Globals::parse_global_args(std::ifstream& config_file){
     ITERATE_STEPS = j.value("ITERATE_STEPS", 1);
     RBF_GAMMA = j.value("RBF_GAMMA", 1.0);
     NUM_NEIGHBOURS = j.value("NUM_NEIGHBOURS", 1);
+    OBSTALCE_SENSOR_RADIUS = j.value("OBSTALCE_SENSOR_RADIUS", 3.0);
+    DEFAULT_OBS_SPEED = j.value("DEFAULT_OBS_SPEED", 1.0);
 }
 
 Globals::Globals(){};

@@ -24,13 +24,34 @@ FactorGraph::FactorGraph(int robot_id) : robot_id_(robot_id){};
 //      - message passing modes (INTERNAL within a robot's own factorgraph or EXTERNAL between a robot and other robots):
 //          in which case the variable or factor may or may not need to take part in GBP depending on if it's connected to another robot
 /******************************************************************************************************/
-void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode){
-#pragma omp parallel for    
-    for (int f_idx=0; f_idx<factors_.size(); f_idx++){
-        auto f_it = factors_.begin(); std::advance(f_it, f_idx);
-        auto [f_key, fac] = *f_it;
+// void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode){
+// #pragma omp parallel for    
+//     for (int f_idx=0; f_idx<factors_.size(); f_idx++){
+//         auto f_it = factors_.begin(); std::advance(f_it, f_idx);
+//         auto [f_key, fac] = *f_it;
 
-        for (auto var : fac->variables_){
+//         for (auto var : fac->variables_){
+//             // Check if the factor need to be skipped [see note in description]
+//             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
+//             if (msg_passing_mode==INTERNAL && fac->other_rid_!=robot_id_) continue;
+//             // Read message from each connected variable
+//             fac->inbox_[var->key_] = var->outbox_.at(f_key);
+//         }
+//         // Calculate factor potential and create outgoing messages
+//         fac->update_factor();
+//     };
+// };
+
+void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode) {
+    std::vector<std::pair<Key, std::shared_ptr<Factor>>> factor_list;
+    factor_list.reserve(factors_.size());
+    for (auto& kv : factors_) {
+        factor_list.emplace_back(kv.first, kv.second);
+    }
+#pragma omp parallel for
+    for (size_t idx = 0; idx < factor_list.size(); ++idx) {
+        auto& [f_key, fac] = factor_list[idx];
+        for (auto& var : fac->variables_){
             // Check if the factor need to be skipped [see note in description]
             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
             if (msg_passing_mode==INTERNAL && fac->other_rid_!=robot_id_) continue;
@@ -39,8 +60,8 @@ void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode){
         }
         // Calculate factor potential and create outgoing messages
         fac->update_factor();
-    };
-};
+    }
+}
 
 /******************************************************************************************************/
 // Variable Iteration in Gaussian Belief Propagation (GBP).
@@ -55,12 +76,34 @@ void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode){
 //      - message passing modes (INTERNAL within a robot's own factorgraph or EXTERNAL between a robot and other robots):
 //          in which case the variable or factor may or may not need to take part in GBP depending on if it's connected to another robot
 /******************************************************************************************************/
-void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
-#pragma omp parallel for    
-    for (int v_idx=0; v_idx<variables_.size(); v_idx++){
-        auto v_it = variables_.begin(); std::advance(v_it, v_idx);
-        auto [v_key, var] = *v_it;
+// void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
+// #pragma omp parallel for    
+//     for (int v_idx=0; v_idx<variables_.size(); v_idx++){
+//         auto v_it = variables_.begin(); std::advance(v_it, v_idx);
+//         auto [v_key, var] = *v_it;
 
+//         for (auto [f_key, fac] : var->factors_){
+//             // * Check if the variable need to be skipped [see note in description]
+//             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
+//             if (msg_passing_mode==INTERNAL && fac->other_rid_!=robot_id_) continue;
+//             // Read message from each connected factor
+//             var->inbox_[f_key] = fac->outbox_.at(v_key);
+//         }
+
+//         // Update variable belief and create outgoing messages
+//         var->update_belief();
+//     };
+// }
+
+void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
+    std::vector<std::pair<Key, std::shared_ptr<Variable>>> var_list;
+    var_list.reserve(variables_.size());
+    for (auto& kv : variables_) {
+        var_list.emplace_back(kv.first, kv.second);
+    }
+#pragma omp parallel for
+    for (size_t idx = 0; idx < var_list.size(); ++idx) {
+        auto& [v_key, var] = var_list[idx];
         for (auto [f_key, fac] : var->factors_){
             // * Check if the variable need to be skipped [see note in description]
             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
@@ -71,15 +114,19 @@ void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
 
         // Update variable belief and create outgoing messages
         var->update_belief();
-    };
+    }
+
 }
 
+/******************************************************************************************************/
+// Method to print factor gradients on current linearisation points
+/******************************************************************************************************/
 void FactorGraph::print_graph_info() {
     static std::vector<std::string> fac_type_names{"DEFAULT", "DYNAMICS", "INTERROBOT", "OBSTACLE", "DYNAMIC OBSTACLE"};
 
     std::ostringstream oss;
-    // oss << std::fixed << std::setprecision(3);
-    oss << std::scientific << std::setprecision(6);
+    oss << std::fixed << std::setprecision(3);
+    // oss << std::scientific << std::setprecision(6);
 
     oss << "RID: " << robot_id_ << "\n";
     
@@ -103,39 +150,39 @@ void FactorGraph::print_graph_info() {
             sum_mag     += mag;
         }
         
-        oss << "Var " << var->v_id_ << ", ts: " << var->ts_ << "\n";
+        oss << "Var " << var->v_id_ << ", ts: " << var->ts_ << ", pos: " << var->mu_.transpose() << "\n";
         
         // Print normalised gradient directions and magnitudes
-        for (auto& [f_key, g_i] : grads) {
-            auto fac = this->factors_[f_key];
-            double mag   = mags[f_key];
-            double score = (sum_mag > 0.0 ? mag / sum_mag : 0.0);
+        // for (auto& [f_key, g_i] : grads) {
+        //     auto fac = this->factors_[f_key];
+        //     double mag   = mags[f_key];
+        //     double score = (sum_mag > 0.0 ? mag / sum_mag : 0.0);
         
-            Eigen::VectorXd dir = (mag > 0.0
-                ? Eigen::VectorXd(grads[f_key] / mag)
-                : Eigen::VectorXd::Zero(var->mu_.size()));
+        //     Eigen::VectorXd dir = (mag > 0.0
+        //         ? Eigen::VectorXd(grads[f_key] / mag)
+        //         : Eigen::VectorXd::Zero(var->mu_.size()));
         
-            // Customise factor name printing
-            auto fac_type = fac->factor_type_;
-            std::ostringstream fac_name;
-            fac_name << "    " << fac_type_names[fac_type];
-            if (fac_type == DYNAMICS_FACTOR) {
-                auto vars = fac->variables_;
-                if (vars.size() < 2) {
-                    print("Var size error", fac_type);
-                    return;
-                }
-                fac_name << " (" << vars[0]->v_id_ << "-" << vars[1]->v_id_ << ")";
-            }
+        //     // Customise factor name printing
+        //     auto fac_type = fac->factor_type_;
+        //     std::ostringstream fac_name;
+        //     fac_name << "    " << fac_type_names[fac_type];
+        //     if (fac_type == DYNAMICS_FACTOR) {
+        //         auto vars = fac->variables_;
+        //         if (vars.size() < 2) {
+        //             print("Var size error", fac_type);
+        //             return;
+        //         }
+        //         fac_name << " (" << vars[0]->v_id_ << "-" << vars[1]->v_id_ << ")";
+        //     }
 
-            // Output
-            oss << fac_name.str() << ": " << "score=" << score << "  dir=[";
-            for (int i = 0; i < dir.size(); ++i) {
-                if (i) oss << ", ";
-                oss << dir[i];
-            }
-            oss << "]\n";
-        }
+        //     // Output
+        //     oss << fac_name.str() << ": " << "score=" << score << "  dir=[";
+        //     for (int i = 0; i < dir.size(); ++i) {
+        //         if (i) oss << ", ";
+        //         oss << dir[i];
+        //     }
+        //     oss << "]\n";
+        // }
     }
     print(oss.str());
 }

@@ -15,7 +15,7 @@
   "SEED": 2,
   "TIMESTEP": 0.1,
   "MAX_TIME": 10000,
-  "NUM_ROBOTS": 10,
+  "NUM_ROBOTS": 70,
   "T_HORIZON": 5,
   "MAX_HORIZON_DIST": 20,
   "ROBOT_RADIUS": 1,

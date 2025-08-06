@@ -17,9 +17,9 @@ struct IGeometry
 {
     std::shared_ptr<Model> model_;
     Color color_;
-    Eigen::Matrix<double, 3, Eigen::Dynamic> mat_;
+    Eigen::Matrix<double, 2, Eigen::Dynamic> mat_;
     // Define KDTree type with row_major = false (so that each column vec is a point rather than each row)
-    using KDTree = nanoflann::KDTreeEigenMatrixAdaptor<Eigen::Matrix<double, 3, Eigen::Dynamic>, 3, nanoflann::metric_L2, false>;
+    using KDTree = nanoflann::KDTreeEigenMatrixAdaptor<Eigen::Matrix<double, 2, Eigen::Dynamic>, 2, nanoflann::metric_L2, false>;
     std::unique_ptr<KDTree> kdtree_;
 
     IGeometry(std::shared_ptr<Model> model, Color color)
@@ -27,7 +27,7 @@ struct IGeometry
     virtual ~IGeometry() = default;
 
     // Returns the k nearest neighbours to query_pt as vector of (point, squared_dist)
-    std::vector<std::pair<Eigen::Vector3d, double>> getNearestPoints(int k, const Eigen::Vector3d &query_pt) const
+    std::vector<std::pair<Eigen::Vector2d, double>> getNearestPoints(int k, const Eigen::Vector2d &query_pt) const
     {
         if (!kdtree_) {
             throw std::runtime_error("Geometry::getNearestPoints called before KDTree was built.");
@@ -48,7 +48,7 @@ struct IGeometry
         nanoflann::SearchParameters params;
         kdtree_->index_->findNeighbors(resultSet, query_pt.data(), params);
 
-        std::vector<std::pair<Eigen::Vector3d, double>> results;
+        std::vector<std::pair<Eigen::Vector2d, double>> results;
         for (int i = 0; i < k; ++i)
         {
             results.emplace_back(mat_.col(ret_indexes[i]), out_dists_sqr[i]);
@@ -67,43 +67,23 @@ struct BoxGeometry : IGeometry
     BoxGeometry(std::shared_ptr<Model> model_ptr, Eigen::Vector3d min_pt, Eigen::Vector3d max_pt, Color c)
         : IGeometry(model_ptr, c), min_pt_(min_pt), max_pt_(max_pt) 
     {
-        std::vector<Eigen::Vector3d> points;
+        std::vector<Eigen::Vector2d> points;
         auto lerp = [](double a, double b, double t){ return a + (b-a)*t; };
-        // Generate grid of points for each face
-        for (int f = 0; f < 6; ++f) {
-            for (int i = 0; i <= grid_size_; ++i) {
-                for (int j = 0; j <= grid_size_; ++j) {
-                    double u = double(i)/grid_size_, v = double(j)/grid_size_;
-                    Eigen::Vector3d pt;
-                    switch (f) {
-                        case 0: // +X 
-                            pt.x() = max_pt_.x(); pt.y() = lerp(min_pt.y(), max_pt.y(), u);; pt.z() = lerp(min_pt.z(), max_pt.z(), v);
-                            break;
-                        case 1: // -X
-                            pt.x() = min_pt_.x(); pt.y() = lerp(min_pt.y(), max_pt.y(), u);; pt.z() = lerp(min_pt.z(), max_pt.z(), v);
-                            break;
-                        case 2: // +Y
-                            pt.y() = max_pt_.y(); pt.x() = lerp(min_pt.x(), max_pt.x(), u);; pt.z() = lerp(min_pt.z(), max_pt.z(), v);
-                            break;
-                        case 3: // -Y
-                            pt.y() = min_pt_.y(); pt.x() = lerp(min_pt.x(), max_pt.x(), u);; pt.z() = lerp(min_pt.z(), max_pt.z(), v);
-                            break;
-                        case 4: // +Z
-                            pt.z() = max_pt_.z(); pt.x() = lerp(min_pt.x(), max_pt.x(), u);; pt.y() = lerp(min_pt.y(), max_pt.y(), v);
-                            break;
-                        case 5: // -Z
-                            pt.z() = min_pt_.z(); pt.x() = lerp(min_pt.x(), max_pt.x(), u);; pt.y() = lerp(min_pt.y(), max_pt.y(), v);
-                            break;
-                    }
-                    points.push_back(pt);
-                }
+        // Generate grid outlines only on the X-Z plane
+        for (int i = 0; i <= grid_size_; ++i) {
+            for (int j = 0; j <= grid_size_; ++j) {
+                double u = double(i)/grid_size_, v = double(j)/grid_size_;
+                Eigen::Vector2d pt;
+                pt.x() = lerp(min_pt.x(), max_pt.x(), u);
+                pt.y() = lerp(min_pt.z(), max_pt.z(), v);
+                points.push_back(pt);
             }
         }
         // Build KDTree from obstacle point cloud
-        mat_.resize(3, points.size());
+        mat_.resize(2, points.size());
         for (size_t i = 0; i < points.size(); ++i)
             mat_.col(i) = points[i];
-        kdtree_ = std::make_unique<KDTree>(3, std::cref(mat_));
+        kdtree_ = std::make_unique<KDTree>(2, std::cref(mat_));
         kdtree_->index_->buildIndex();
     }
 };
@@ -113,11 +93,16 @@ struct MeshGeometry : IGeometry
     MeshGeometry(std::shared_ptr<Model> model_ptr, const std::vector<Eigen::Vector3d> &points, Color c)
         : IGeometry(model_ptr, c)
     {
+        std::vector<Eigen::Vector2d> points2d;
+        // Extract 2D boundary points
+        for (const auto &pt : points) {
+            points2d.emplace_back(pt.x(), pt.z());
+        }
         // Build KDTree from obstacle point cloud
-        mat_.resize(3, points.size());
-        for (size_t i = 0; i < points.size(); ++i)
-            mat_.col(i) = points[i];
-        kdtree_ = std::make_unique<KDTree>(3, std::cref(mat_));
+        mat_.resize(2, points2d.size());
+        for (size_t i = 0; i < points2d.size(); ++i)
+            mat_.col(i) = points2d[i];
+        kdtree_ = std::make_unique<KDTree>(2, std::cref(mat_));
         kdtree_->index_->buildIndex();
     }
 };

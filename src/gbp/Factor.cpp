@@ -10,6 +10,7 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
 #include <raylib.h>
 
 /*****************************************************************************************************/
@@ -195,12 +196,38 @@ Message Factor::marginalise_factor_dist(const Eigen::VectorXd &eta, const Eigen:
     lam_ab << Lam(seqN(marg_idx, n_dofs), seq(0, marg_idx - 1)), Lam(seqN(marg_idx, n_dofs), seq(marg_idx + n_dofs, last));
     lam_ba << Lam(seq(0, marg_idx - 1), seq(marg_idx, marg_idx + n_dofs - 1)), Lam(seq(marg_idx + n_dofs, last), seqN(marg_idx, n_dofs));
     lam_bb << Lam(seq(0, marg_idx - 1), seq(0, marg_idx - 1)), Lam(seq(0, marg_idx - 1), seq(marg_idx + n_dofs, last)),
-        Lam(seq(marg_idx + n_dofs, last), seq(0, marg_idx - 1)), Lam(seq(marg_idx + n_dofs, last), seq(marg_idx + n_dofs, last));
+              Lam(seq(marg_idx + n_dofs, last), seq(0, marg_idx - 1)), Lam(seq(marg_idx + n_dofs, last), seq(marg_idx + n_dofs, last));
 
-    Eigen::MatrixXd lam_bb_inv = lam_bb.inverse();
+    // Use Cholesky decomposition for efficient matrix inversion
     Message marginalised_msg(n_dofs);
-    marginalised_msg.eta = eta_a - lam_ab * lam_bb_inv * eta_b;
-    marginalised_msg.lambda = lam_aa - lam_ab * lam_bb_inv * lam_ba;
+
+    llt_solver_.compute(lam_bb);
+    
+    if (llt_solver_.info() == Eigen::Success) {
+        // Successfully decomposed - solve efficiently
+        Eigen::VectorXd solved_eta = llt_solver_.solve(eta_b);
+        Eigen::MatrixXd solved_lam = llt_solver_.solve(lam_ba);
+        
+        marginalised_msg.eta = eta_a - lam_ab * solved_eta;
+        marginalised_msg.lambda = lam_aa - lam_ab * solved_lam;
+    } else {
+        // Fallback to LDLT for indefinite matrices
+        ldlt_solver_.compute(lam_bb);
+        
+        if (ldlt_solver_.info() == Eigen::Success && ldlt_solver_.isPositive()) {
+            Eigen::VectorXd solved_eta = ldlt_solver_.solve(eta_b);
+            Eigen::MatrixXd solved_lam = ldlt_solver_.solve(lam_ba);
+            
+            marginalised_msg.eta = eta_a - lam_ab * solved_eta;
+            marginalised_msg.lambda = lam_aa - lam_ab * solved_lam;
+        } else {
+            // Final fallback to direct inverse for problematic cases
+            Eigen::MatrixXd lam_bb_inv = lam_bb.inverse();
+            marginalised_msg.eta = eta_a - lam_ab * lam_bb_inv * eta_b;
+            marginalised_msg.lambda = lam_aa - lam_ab * lam_bb_inv * lam_ba;
+        }
+    }
+    
     if (!marginalised_msg.lambda.allFinite())
         marginalised_msg.setZero();
 
@@ -390,7 +417,7 @@ Eigen::MatrixXd DynamicObstacleFactor::J_func_(const Eigen::VectorXd &X)
     Eigen::Vector2d grad_obs{0., 0.};
     for (const auto &[pt_world, dist_squared] : neighbours_)
     {
-        Eigen::Vector2d diff = X.segment<2>(0) - Eigen::Vector2d{pt_world.x(), pt_world.z()};
+        Eigen::Vector2d diff = X.segment<2>(0) - pt_world;
         double weight = gaussianRBF(dist_squared);
         grad_obs += -2.0 * globals.RBF_GAMMA * weight * diff;
     }
@@ -398,78 +425,43 @@ Eigen::MatrixXd DynamicObstacleFactor::J_func_(const Eigen::VectorXd &X)
     J(0, 0) = grad_obs.x();
     J(0, 1) = grad_obs.y();
 
-    if (grad_obs.norm() > 1e-8)
-    {
-        Eigen::Vector2d n = grad_obs.normalized();
-        Eigen::Vector2d tan{-n.y(), n.x()};
-        constexpr double slide_alpha = 0.0;
-        J(0, 0) += slide_alpha * tan.x();
-        J(0, 1) += slide_alpha * tan.y();
-    }
-
     J /= double(neighbours_.size());
-
     return J;
 }
 
 bool DynamicObstacleFactor::skip_factor()
 {
-    neighbours_ = obs_->getNearestPoints(Eigen::Vector3d{X_(0), robot_radius_, X_(1)}, globals.NUM_NEIGHBOURS, delta_t_);
-    return false;
+    neighbours_ = obs_->getNearestPoints(Eigen::Vector2d{X_(0), X_(1)}, globals.NUM_NEIGHBOURS, delta_t_);
+    // this->skip_flag = neighbours_.front().second >= globals.OBSTALCE_SENSOR_RADIUS * globals.OBSTALCE_SENSOR_RADIUS;
+    this->skip_flag = false;
+    return this->skip_flag;
 }
 
 void DynamicObstacleFactor::draw()
 {
-    // if (neighbours_.empty()) return;
     auto v_0 = variables_[0];
     double dist_sqr = neighbours_.front().second;
     if (dist_sqr <= (safety_distance_ * safety_distance_))
     {
-        auto grad = this->J_func_(X_);
-        grad *= -1.0;
         if (!dbg)
         {
             std::ostringstream oss;
-            oss << "grad=[" << grad(0, 0) << ", " << grad(0, 1) << "]\n";
-            oss << obs_->state_.transpose() << "\n";
-            auto s = obs_->state_;
-            s.segment<2>(0) += s.segment<2>(2) * delta_t_;
-            oss << s.transpose() << "\n";
-            oss << obs_->getStateAfterT(delta_t_).transpose() << "\n";
+            for (const auto& nb: neighbours_){
+                oss << nb.second << ", ";
+            }
             print(oss.str());
             dbg = true;
         }
-        auto state_t = obs_->getStateAfterT(delta_t_);
+        auto nb = neighbours_.front().first;
+        auto state_t = obs_->states_.at(int(delta_t_/globals.T0));
+        DrawCylinderEx(Vector3{(float)v_0->mu_(0), globals.ROBOT_RADIUS, (float)v_0->mu_(1)},
+                       Vector3{(float)nb(0), globals.ROBOT_RADIUS, (float)nb(1)},
+                       0.1, 0.1, 4, RED);
         DrawModel(*obs_->geom_->model_, Vector3{(float)state_t[0], obs_->elevation_, (float)state_t[1]}, 1.f, ColorAlpha(DARKGREEN, 0.2f));
-
-        Eigen::Vector3d pos{0.0, 0.0, 0.0};
-        Eigen::Vector2d grad_{0.0, 0.0};
-        for (const auto &nb : neighbours_)
-        {
-            auto pt = nb.first;
-            Eigen::Vector2d diff = X_.segment<2>(0) - Eigen::Vector2d{pt.x(), pt.z()};
-            double w = gaussianRBF(nb.second);
-            grad_ += -2.0 * globals.RBF_GAMMA * w * diff;
-            pos += nb.first;
-        }
-
-        Eigen::Vector2d tangent{0.0, 0.0};
-        if (grad_.norm() > 1e-8)
-        {
-            auto normal = grad_.normalized();
-            tangent = Eigen::Vector2d{-normal.y(), normal.x()};
-            tangent *= 3; // stretch it arbitraily
-        }
-
-        pos /= neighbours_.size();
-        DrawCylinderEx(Vector3{(float)pos.x(), (float)pos.y(), (float)pos.z()},
-                       Vector3{(float)(pos.x() + grad(0, 0)), (float)pos.y(), (float)(pos.z() + grad(0, 1))},
-                       0.05, 0.05, 4, RED);
-
-        // DrawCylinderEx(Vector3{(float)pos.x(), (float)pos.y(), (float)pos.z()},
-        //                Vector3{(float)(pos.x()+tangent.x()), (float)pos.y(), (float)(pos.z()+tangent.y())},
-        //                0.05, 0.05, 4, RED);
-
         DrawSphere(Vector3{(float)v_0->mu_(0), robot_radius_, (float)v_0->mu_(1)}, 0.8 * robot_radius_, ColorAlpha(DARKGREEN, 0.2f));
+        for (const auto& nb : neighbours_) {
+            auto nb_pos = nb.first;
+            DrawSphere(Vector3{(float)nb_pos(0), robot_radius_, (float)nb_pos(1)}, 0.2 * robot_radius_, ColorAlpha(DARKBLUE, 0.2f));
+        }
     }
 }

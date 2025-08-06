@@ -6,6 +6,7 @@
 #include "Simulator.h"
 #include <Eigen/Dense>
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
 #include <Utils.h>
 #include <DynamicObstacle.h>
 #include <gbp/GBPCore.h>
@@ -29,7 +30,7 @@ enum FactorType
     DYNAMICS_FACTOR = 1,
     INTERROBOT_FACTOR = 2,
     OBSTACLE_FACTOR = 3,
-    DYNAMIC_OBSTACLE_FACTOR = 4
+    DYNAMIC_OBSTACLE_FACTOR = 4,
 };
 /*****************************************************************************************/
 // Factor used in GBP
@@ -60,6 +61,13 @@ public:
         return skip_flag;
     };
     bool dbg = false; // Flag to signify if debug message has been printed, for debugging purposes only.
+
+private:
+    // Working memory for Cholesky optimization to avoid repeated allocations
+    mutable Eigen::LLT<Eigen::MatrixXd> llt_solver_;    // Reusable LLT solver
+    mutable Eigen::LDLT<Eigen::MatrixXd> ldlt_solver_;  // Reusable LDLT solver
+
+public:
 
     // Function declarations
     Factor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
@@ -148,7 +156,7 @@ class DynamicObstacleFactor : public Factor
     float delta_t_;
     float robot_radius_;
     double safety_distance_;
-    std::vector<std::pair<Eigen::Vector3d, double>> neighbours_;
+    std::vector<std::pair<Eigen::Vector2d, double>> neighbours_;
     
 public:
     std::shared_ptr<DynamicObstacle> obs_;

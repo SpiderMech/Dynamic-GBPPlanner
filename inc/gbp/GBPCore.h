@@ -23,31 +23,54 @@ enum MsgPassingMode {EXTERNAL, INTERNAL};
 // iterateGBP performs n_iters iterations of message passing of the given message passing mode, on the set of
 // factorgraphs provided in factorgraphs. Note, these are in a map, accesed by an int. These could be the map of simulator->robots_.
 /***********************************************************************************/
-template <typename T>
-void iterateGBP(int n_iters, MsgPassingMode msg_passing_mode, std::map<int, std::shared_ptr<T>>& factorgraphs);
+
+// template <typename T>
+// void iterateGBP(int n_iters, MsgPassingMode msg_passing_mode, std::map<int, std::shared_ptr<T>>& factorgraphs){
+//     for (int i=0; i<n_iters; i++){
+// #pragma omp parallel for
+//         // Iterate through robots
+//         for (int r_idx=0; r_idx<factorgraphs.size(); r_idx++){
+//             auto it_r = factorgraphs.begin(); std::advance(it_r, r_idx);
+//             auto& [r_id, factorgraph] = *it_r;
+//             factorgraph->factorIteration(msg_passing_mode);
+//         }
+    
+// #pragma omp parallel for
+//         // Iterate through robots
+//         for (int r_idx=0; r_idx<factorgraphs.size(); r_idx++){
+//             auto it_r = factorgraphs.begin(); std::advance(it_r, r_idx);
+//             auto& [r_id, factorgraph] = *it_r;
+//             factorgraph->variableIteration(msg_passing_mode);
+//         }
+//     }
+
+// }    
 
 template <typename T>
-void iterateGBP(int n_iters, MsgPassingMode msg_passing_mode, std::map<int, std::shared_ptr<T>>& factorgraphs){
-    for (int i=0; i<n_iters; i++){
-#pragma omp parallel for
-        // Iterate through robots
-        for (int r_idx=0; r_idx<factorgraphs.size(); r_idx++){
-            auto it_r = factorgraphs.begin(); std::advance(it_r, r_idx);
-            auto& [r_id, factorgraph] = *it_r;
-            factorgraph->factorIteration(msg_passing_mode);
-        }
-    
-#pragma omp parallel for
-        // Iterate through robots
-        for (int r_idx=0; r_idx<factorgraphs.size(); r_idx++){
-            auto it_r = factorgraphs.begin(); std::advance(it_r, r_idx);
-            auto& [r_id, factorgraph] = *it_r;
-            factorgraph->variableIteration(msg_passing_mode);
-        }
+void iterateGBP(int n_iters, MsgPassingMode msg_passing_mode, std::map<int, std::shared_ptr<T>>& factorgraphs) {
+    // Pre-extract factorgraph pointers into a vector for OpenMP-friendly indexing
+    std::vector<std::shared_ptr<T>> fgs;
+    fgs.reserve(factorgraphs.size());
+    for (auto& kv : factorgraphs) {
+        fgs.push_back(kv.second);
     }
 
-}    
-
+    #pragma omp parallel
+    {
+        for (int iter = 0; iter < n_iters; ++iter) {
+            // factor update across all robots
+            #pragma omp for nowait
+            for (size_t i = 0; i < fgs.size(); ++i) {
+                fgs[i]->factorIteration(msg_passing_mode);
+            }
+            // variable update across all robots
+            #pragma omp for
+            for (size_t i = 0; i < fgs.size(); ++i) {
+                fgs[i]->variableIteration(msg_passing_mode);
+            }
+        }
+    }
+}
 
 /******************************************************************/
 // This data structure is used to represent both variables and factors

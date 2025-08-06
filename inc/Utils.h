@@ -3,8 +3,10 @@
 // This code is licensed (see LICENSE for details)
 /**************************************************************************************/
 #pragma once
+#include <gbp/GBPCore.h>
 #include <iostream>
 #include <chrono>
+#include <random>
 
 /*******************************************************************************/
 // Easy print statement, just use like in python: print(a, b, "blah blah");
@@ -40,7 +42,6 @@ auto since(std::chrono::time_point<clock_t, duration_t> const& start)
     return std::chrono::duration_cast<result_t>(clock_t::now() - start);
 }
 
-
 /*******************************************************************************************/
 // Non-linear function for determining the timesteps at which variables in the planned path are placed.
 /*******************************************************************************************/
@@ -50,4 +51,14 @@ std::vector<int> getVariableTimesteps(int lookahead_horizon, int lookahead_multi
 // Lineaer function for determining the timesteps at which variables in the planned path are placed.
 /*******************************************************************************************/
 std::vector<int> getLinearVariableTimesteps(int lookahead_horizon);
+
+/***************************************************************************************************************/
+// RANDOM NUMBER GENERATORS
+/***************************************************************************************************************/
+inline std::mt19937 rng(static_cast<std::mt19937::result_type>(globals.SEED));
+
+int random_int(int lower, int upper);
+
+float random_float(float lower, float upper);
+
 

@@ -67,6 +67,8 @@ class Globals {
     int ITERATE_STEPS;                                      // Number of ticks before pausing when in Iterate mode.
     double RBF_GAMMA;                                       // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
     int NUM_NEIGHBOURS;                                     // Number of RBFs to combine for Dynamics Obstacle Factor
+    double OBSTALCE_SENSOR_RADIUS;                          // Radius of area where obstacles inside are not skipped.
+    double DEFAULT_OBS_SPEED;                               // [m/s]
     
     Globals();
     int parse_global_args(DArgs::DArgs& dargs);

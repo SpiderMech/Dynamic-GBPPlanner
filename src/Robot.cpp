@@ -28,11 +28,26 @@ Robot::Robot(Simulator *sim,
 
     height_3D_ = robot_radius_; // Height out of plane for 3d visualisation only
 
+    // Initialise robot at
+    if (waypoints_.size() == 0)
+    {
+        std::cerr << "warning: waypoints_ empty for robot " << rid << ". Initialising to default pose ([0, 0, 0, 0])" << "\n";
+        Eigen::VectorXd wp{{0., 0., 0., 0., 0.}};
+        waypoints_.push_back(wp);
+    }
+
     // Robot will always set its horizon state to move towards the next waypoint.
     // Once this waypoint has been reached, it pops it from the waypoints
-    Eigen::VectorXd start = position_ = waypoints_[0];
+    auto &wp = waypoints_.front();
+    Eigen::VectorXd wp_no_timer{{wp(0), wp(1), wp(2), wp(3)}};
+    Eigen::VectorXd start = position_ = wp_no_timer;
+    if (wp.size() >= 5 && wp(4) > 0.0)
+    {
+        task_active_ = true;
+        task_timer_ = float(wp(4));
+    }
     waypoints_.pop_front();
-    auto goal = (waypoints_.size() > 0) ? waypoints_[0] : start;
+    auto goal = (waypoints_.size() > 0) ? wp_no_timer : start;
 
     // Initialise the horzion in the direction of the goal, at a distance T_HORIZON * MAX_SPEED from the start.
     Eigen::VectorXd start2goal = goal - start;
@@ -109,12 +124,38 @@ Robot::~Robot()
 /***************************************************************************************************/
 void Robot::updateCurrent()
 {
+    auto curr_var = getVar(0);
+
+    if (task_timer_ > 0.f)
+    {
+        task_timer_ = std::max(0.f, task_timer_ - globals.TIMESTEP);
+        if (task_timer_ == 0.f)
+        {
+            task_active_ = false;
+        }
+        else
+        {
+            return;
+        }
+    }
+
     // Move plan: move plan current state by plan increment
     Eigen::VectorXd increment = ((*this)[1]->mu_ - (*this)[0]->mu_) * globals.TIMESTEP / globals.T0;
     // In GBP we do this by modifying the prior on the variable
-    getVar(0)->change_variable_prior(getVar(0)->mu_ + increment);
+    // If there is a task active, we don't want to overwrite the strong prior at the task waypoint
+    curr_var->change_variable_prior(curr_var->mu_ + increment);
     // Real pose update
     position_ = position_ + increment;
+
+    // Perform distance check to initiate the task countdown timer
+    if (task_active_ && waypoints_.size() > 0) {
+        auto &wp = waypoints_.front();
+        Eigen::VectorXd dist_curr_to_goal = position_({0, 1}) - wp({0, 1});
+        if (dist_curr_to_goal.norm() <  robot_radius_) {
+            task_timer_ = wp(4);
+            waypoints_.pop_front();
+        }
+    }
 };
 
 /***************************************************************************************************/
@@ -122,26 +163,51 @@ void Robot::updateCurrent()
 /***************************************************************************************************/
 void Robot::updateHorizon()
 {
-    // Horizon state moves towards the next waypoint.
-    // The Horizon state's velocity is capped at MAX_SPEED
-    auto horizon = getVar(-1); // get horizon state variable
-    // Eigen::VectorXd dist_curr_to_horz = horizon->mu_({0, 1}) - getVar(0)->mu_({0, 1});
-    // if (dist_curr_to_horz.norm() >= globals.MAX_HORIZON_DIST) return;
+    // Horizon is moved only if not performing a task
+    if (task_active_)
+        return;
+    task_active_ = false;
 
-    Eigen::VectorXd dist_horz_to_goal = waypoints_.front()({0, 1}) - horizon->mu_({0, 1});
-    Eigen::VectorXd new_vel = dist_horz_to_goal.normalized() * std::min((double)globals.MAX_SPEED, dist_horz_to_goal.norm());
-    Eigen::VectorXd new_pos = horizon->mu_({0, 1}) + new_vel * globals.TIMESTEP;
+    auto horizon = getVar(-1);
+    // Prevent horizon from moving beyond a threshold, in case robot is stuck
+    Eigen::VectorXd dist_curr_to_horz = horizon->mu_({0, 1}) - getVar(0)->mu_({0, 1});
+    if (dist_curr_to_horz.norm() >= globals.MAX_HORIZON_DIST)
+        return;
 
-    // Update horizon state with new pos and vel
-    horizon->mu_ << new_pos, new_vel;
-    horizon->change_variable_prior(horizon->mu_);
-
-    // If the horizon has reached the waypoint, pop that waypoint from the waypoints.
-    // Could add other waypoint behaviours here (maybe they might move, or change randomly).
-    if (dist_horz_to_goal.norm() < robot_radius_)
+    if (waypoints_.size() > 0)
     {
-        if (waypoints_.size() > 1)
-            waypoints_.pop_front();
+        auto &wp = waypoints_.front();
+        // Check if next waypoint is a task
+        next_wp_is_task_ = wp.size() >= 5 && wp(4) > 0.0;
+
+        // Horizon state moves towards the next waypoint.
+        // The Horizon state's velocity is capped at MAX_SPEED
+        Eigen::VectorXd dist_horz_to_goal = wp({0, 1}) - horizon->mu_({0, 1});
+        Eigen::VectorXd new_vel = dist_horz_to_goal.normalized() * std::min((double)globals.MAX_SPEED, dist_horz_to_goal.norm());
+        Eigen::VectorXd new_pos = horizon->mu_({0, 1}) + new_vel * globals.TIMESTEP;
+
+        // Update horizon state with new pos and vel
+        Eigen::VectorXd new_mu(4);
+        new_mu << new_pos, new_vel;
+        horizon->change_variable_prior(new_mu);
+
+        // If the horizon has reached the waypoint, handle task or normal waypoint
+        if (dist_horz_to_goal.norm() < robot_radius_)
+        {
+            if (next_wp_is_task_)
+            {
+                task_active_ = true;
+                // Snap horizon state to task waypoint
+                Eigen::VectorXd new_mu(4);
+                new_mu << wp.head<2>(0), Eigen::VectorXd::Zero(2);
+                horizon->change_variable_prior(new_mu);
+            }
+            else
+            {
+                // Normal waypoint - just pop it
+                waypoints_.pop_front();
+            }
+        }
     }
 }
 
@@ -240,6 +306,18 @@ void Robot::updateDynamicObstacleFactors()
         {
             to_remove.push_back(oid);
         }
+        else
+        {
+            // Also remove factors for obstacles that have moved too far away
+            auto obs = sim_->obstacles_.at(oid);
+            const double removal_threshold = globals.OBSTALCE_SENSOR_RADIUS + robot_radius_ + 3.0; // Slightly larger than culling threshold
+
+            // Remove factor if obstacle is too far away from both current and future robot positions
+            if (getDistToObs(obs) > removal_threshold * removal_threshold)
+            {
+                to_remove.push_back(oid);
+            }
+        }
     }
     for (int oid : to_remove)
         deleteDynamicObstacleFactors(oid);
@@ -262,6 +340,15 @@ void Robot::updateDynamicObstacleFactors()
 /***************************************************************************************************/
 void Robot::createDynamicObstacleFactors(std::shared_ptr<DynamicObstacle> obs)
 {
+    // Spatial culling: check if obstacle is close enough to warrant factor creation
+    // Use a conservative threshold that's larger than the factor's skip radius
+    const double culling_threshold = globals.OBSTALCE_SENSOR_RADIUS + robot_radius_ + 2.0; // Add safety margin
+    // Skip factor creation if obstacle is too far away from both current and future robot positions
+    if (getDistToObs(obs) > culling_threshold * culling_threshold)
+    {
+        return;
+    }
+
     for (int i = 1; i < num_variables_ - 1; ++i)
     {
         std::vector<std::shared_ptr<Variable>> variables{getVar(i)};
@@ -300,6 +387,30 @@ void Robot::deleteDynamicObstacleFactors(int oid)
         connected_obs_ids_.erase(it);
     }
 }
+/***************************************************************************************************/
+// Get distance between position and obstacle centre
+/***************************************************************************************************/
+double Robot::getDistToObs(std::shared_ptr<DynamicObstacle> obs)
+{
+    // Check current distance between robot and obstacle
+    Eigen::Vector2d robot_pos = position_.head<2>();
+    Eigen::Vector2d obs_pos_current(obs->state_[0], obs->state_[1]);
+    double current_dist_squared = (robot_pos - obs_pos_current).squaredNorm();
+
+    // Also check the distance to the robot's horizon state vs obstacle's future position
+    auto horizon_var = getVar(-1);
+    Eigen::Vector2d robot_horizon = horizon_var->mu_.head<2>();
+    int horizon_ts = horizon_var->ts_;
+
+    // Get obstacle position at the horizon timestep
+    Eigen::Vector4d obs_state_future = obs->states_.at(horizon_ts);
+    Eigen::Vector2d obs_pos_future(obs_state_future[0], obs_state_future[1]);
+    double horizon_dist_squared = (robot_horizon - obs_pos_future).squaredNorm();
+
+    // Use the minimum distance (current or future) for culling decision
+    double min_dist_squared = std::min(current_dist_squared, horizon_dist_squared);
+    return min_dist_squared;
+};
 
 /***************************************************************************************************/
 // Drawing functions for the robot.
@@ -314,12 +425,14 @@ void Robot::draw()
         static int debug = 0;
         for (auto [vid, variable] : variables_)
         {
-            if (!variable->valid_) continue;
+            if (!variable->valid_)
+                continue;
             DrawSphere(Vector3{(float)variable->mu_(0), height_3D_, (float)variable->mu_(1)}, 0.5 * robot_radius_, ColorAlpha(col, 0.5));
         }
         for (auto [fid, factor] : factors_)
         {
-            if (factor->factor_type_ != DYNAMICS_FACTOR) continue;
+            if (factor->factor_type_ != DYNAMICS_FACTOR)
+                continue;
             auto variables = factor->variables_;
             Eigen::VectorXd p0 = variables[0]->mu_, p1 = variables[1]->mu_;
             DrawCylinderEx(Vector3{(float)p0(0), globals.ROBOT_RADIUS, (float)p0(1)}, Vector3{(float)p1(0), globals.ROBOT_RADIUS, (float)p1(1)}, 0.1, 0.1, 4, BLACK);
