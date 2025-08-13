@@ -29,16 +29,21 @@ public:
     Robot(Simulator* sim,
           int rid,
           std::deque<Eigen::VectorXd> waypoints,
-          float size,
-          Color color);
+          RobotType type = RobotType::SPHERE,
+          float scale = 1.f,
+          float radius = globals.ROBOT_RADIUS,
+          Color color =  GREEN);
     ~Robot();
 
 
     Simulator* sim_;                            // Pointer to the simulator
+    int dofs_;                                  // Degrees of freedom of the robot (4 or 5)
     int rid_ = 0;                               // Robot id
     std::deque<Eigen::VectorXd> waypoints_{};   // Dequeue of waypoints (whenever the robot reaches a point, it is popped off the front of the dequeue)
     float robot_radius_ = 1.;                   // Robot radius
     Color color_ = DARKGREEN;                   // Colour of robot
+    RobotType robot_type_ = RobotType::SPHERE;  // Type of robot model to use
+    Eigen::Vector2d robot_dimensions_;          // Robot dimensions (width, length) for OBB collision detection
 
     int num_variables_;                         // Number of variables in the planned path (assumed to be the same for all robots)
     std::vector<int> connected_r_ids_{};        // List of robot ids that are currently connected via inter-robot factors to this robot
@@ -46,7 +51,10 @@ public:
     std::vector<int> connected_obs_ids_{};      // List of obstacle ids that currently has dynamic factors connected to this robot 
     Image* p_obstacleImage;                     // Pointer to image representing the obstacles in the environment
     float height_3D_ = 0.f;                     // Height out of plane (for 3d visualisation only)
+    float scale_ = 1.f;                         // Scale factor of the model
     Eigen::VectorXd position_;                  // Position of the robot (equivalent to taking the [x,y] of the current state of the robot)
+    float orientation_ = 0.0f;                  // Current orientation of the robot in radians (for visualization)
+    double default_angle_offset_ = 0.0;         // Default angle offset of model
     
     // Task/pause timer functionality
     float task_timer_ = 0.f;                    // Countdown timer for task completion [seconds]

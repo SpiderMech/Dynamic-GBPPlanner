@@ -103,8 +103,10 @@ public:
 /*****************************************************************************************************/
 class DynamicsFactor : public Factor
 {
+    double dt_;
+    double v0_ = globals.MAX_SPEED * 0.4; // Velocity scale for orientation transitions
 public:
-    DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
+    DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                    float sigma, const Eigen::VectorXd &measurement, float dt);
     // Constant velocity model
     Eigen::MatrixXd h_func_(const Eigen::VectorXd &X) override;
@@ -121,11 +123,19 @@ public:
 class InterrobotFactor : public Factor
 {
     double safety_distance_;
+    Eigen::Vector2d robot1_dimensions_;  // Dimensions of first robot
+    Eigen::Vector2d robot2_dimensions_;  // Dimensions of second robot
+    double robot1_angle_offset_;         // Default angle offset of OBB of first robot
+    double robot2_angle_offset_;         // Default angle offset of OBB of second robot
 
 public:
-    InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
+    InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                      float sigma, const Eigen::VectorXd &measurement,
-                     float robot_radius);
+                     float robot_radius,
+                     const Eigen::Vector2d& robot1_dims = Eigen::Vector2d::Zero(),
+                     const Eigen::Vector2d& robot2_dims = Eigen::Vector2d::Zero(),
+                     double robot1_angle_offset = 0.0,
+                     double robot2_angle_offset = 0.0);
     Eigen::MatrixXd h_func_(const Eigen::VectorXd &X) override;
     Eigen::MatrixXd J_func_(const Eigen::VectorXd &X) override;
     bool skip_factor() override;
@@ -160,7 +170,7 @@ class DynamicObstacleFactor : public Factor
     
 public:
     std::shared_ptr<DynamicObstacle> obs_;
-    DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
+    DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                           float sigma, const Eigen::VectorXd &measurement, float robot_radius, std::shared_ptr<DynamicObstacle> obs);
 
     double gaussianRBF(double dist_squared) const { return std::exp(-globals.RBF_GAMMA * dist_squared); }

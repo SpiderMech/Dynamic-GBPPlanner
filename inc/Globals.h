@@ -24,7 +24,7 @@ class Globals {
     std::string CONFIG_FILE = "../config/config.json";      // Default config file
     std::string OBSTACLE_FILE;                              // Binary image for obstacles
     std::string ASSETS_DIR;                                 // Directory for Assets
-    int N_DOFS = 4;                                         // Degrees of freedom (x, y, xdot, ydot)
+    int N_DOFS;                                             // Degrees of freedom, defaults to 4 (x, y, xdot, ydot), can be 5 (x, y, xdot, ydot)
     MODES_LIST SIM_MODE = Timestep;                         // Simulation mode to begin with
     MODES_LIST LAST_SIM_MODE = Timestep;                    // Storage of Simulation mode (if time is paused eg.)
     
@@ -42,6 +42,8 @@ class Globals {
     int SEED;                                               // Random Seed 
     float TIMESTEP;                                         // Simulation timestep [s]
     int MAX_TIME;                                           // Exit simulation if more timesteps than this
+    bool NEW_OBSTACLES_NEEDED;                              // Whether to generate new obstacles
+    bool NEW_ROBOTS_NEEDED;                                 // Whether to generate new robots   
     int NUM_ROBOTS;                                         // Number of robots (if no new robots are to be added)
     float T_HORIZON;                                        // Planning horizon [s]
     float MAX_HORIZON_DIST;                                 // [m]. Maximum distance the horizon state can be away from current state.
@@ -52,6 +54,7 @@ class Globals {
     int LOOKAHEAD_MULTIPLE = 3;                             // Parameter affecting how planned path is spaced out in time
     std::string FORMATION;                                  // Robot formation (CIRCLE or JUNCTION)
     float T0;                                               // Time between current state and next state of planned path
+    int ITERATE_STEPS;                                      // Number of ticks before pausing when in Iterate mode.
 
     // GBP parameters
     float SIGMA_POSE_FIXED = 1e-15;                         // Sigma for Unary pose factor on current and horizon states
@@ -63,8 +66,6 @@ class Globals {
 
     // Dynamic Obstacle parameters
     float SIGMA_FACTOR_DYNAMIC_OBSTACLE;                    // Sigma for Dynamic obstacle factors
-    bool NEW_OBSTACLES_NEEDED;                              // Whether to generate new obstacles
-    int ITERATE_STEPS;                                      // Number of ticks before pausing when in Iterate mode.
     double RBF_GAMMA;                                       // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
     int NUM_NEIGHBOURS;                                     // Number of RBFs to combine for Dynamics Obstacle Factor
     double OBSTALCE_SENSOR_RADIUS;                          // Radius of area where obstacles inside are not skipped.
@@ -74,5 +75,4 @@ class Globals {
     int parse_global_args(DArgs::DArgs& dargs);
     void parse_global_args(std::ifstream& config_file);
     void post_parsing();
-
 };

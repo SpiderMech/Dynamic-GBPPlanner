@@ -34,6 +34,7 @@ add_executable(gbpplanner
     src/Utils.cpp 
     src/Graphics.cpp
     src/DynamicObstacle.cpp
+    src/TaskScheduler.cpp
 )
 target_link_libraries(gbpplanner PUBLIC gbp)
 

@@ -7,11 +7,18 @@
 #include <gbp/GBPCore.h>
 #include <gbp/Factor.h>
 #include <gbp/Variable.h>
+#include <GeometryUtils.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Core>
 #include <Eigen/Cholesky>
 #include <raylib.h>
+
+// Helper: smallest signed angle difference a-b in (-pi, pi]
+static inline double angle_diff(double a, double b) {
+    double d = a - b;
+    return std::atan2(std::sin(d), std::cos(d));
+}
 
 /*****************************************************************************************************/
 // Factor constructor
@@ -244,37 +251,153 @@ Message Factor::marginalise_factor_dist(const Eigen::VectorXd &eta, const Eigen:
 /********************************************************************************************/
 /* Dynamics factor: constant-velocity model */
 /*****************************************************************************************************/
-DynamicsFactor::DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
-                               float sigma, const Eigen::VectorXd &measurement,
-                               float dt)
-    : Factor{f_id, r_id, variables, sigma, measurement}
+DynamicsFactor::DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
+                               float sigma, const Eigen::VectorXd &measurement, float dt)
+    : Factor{f_id, r_id, variables, sigma, measurement, n_dofs}, dt_(dt)
 {
     factor_type_ = DYNAMICS_FACTOR;
-    Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n_dofs_ / 2, n_dofs_ / 2);
-    Eigen::MatrixXd O = Eigen::MatrixXd::Zero(n_dofs_ / 2, n_dofs_ / 2);
-    Eigen::MatrixXd Qc_inv = pow(sigma, -2.) * I;
+    
+    // For 5D state: [x, y, xdot, ydot, theta]
+    // With instantaneous alignment model
+    if (n_dofs_ == 5) {
+        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(2, 2);
+        Eigen::MatrixXd Qc_inv = pow(sigma, -2.) * I;
+        
+        // Build the full 5x5 precision matrix
+        Eigen::MatrixXd Qi_inv = Eigen::MatrixXd::Zero(5, 5);
+        // Position and velocity components (same as 4D case)
+        Qi_inv.block<2,2>(0, 0) = 12. * pow(dt_, -3.) * Qc_inv;
+        Qi_inv.block<2,2>(0, 2) = -6. * pow(dt_, -2.) * Qc_inv;
+        Qi_inv.block<2,2>(2, 0) = -6. * pow(dt_, -2.) * Qc_inv;
+        Qi_inv.block<2,2>(2, 2) = 4. / dt_ * Qc_inv;
+        
+        // Orientation component - much looser constraint to prevent fighting with velocity
+        // The orientation should follow velocity naturally, not be forced
+        double sigma_theta = sigma * 10.0;  // Much looser constraint
+        double Qc_inv_theta = pow(sigma_theta, -2.);
+        Qi_inv(4, 4) = 1. / dt_ * Qc_inv_theta;  // Reduced weight
+        
+        this->meas_model_lambda_ = Qi_inv;
+        
+        // For instantaneous alignment, orientation is nonlinear
+        this->linear_ = false;
+    
+    // For 4D state: [x, y, xdot, ydot]
+    } else {
+        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(2, 2);
+        Eigen::MatrixXd O = Eigen::MatrixXd::Zero(2, 2);
+        Eigen::MatrixXd Qc_inv = pow(sigma, -2.) * I;
 
-    Eigen::MatrixXd Qi_inv(n_dofs_, n_dofs_);
-    Qi_inv << 12. * pow(dt, -3.) * Qc_inv, -6. * pow(dt, -2.) * Qc_inv,
-        -6. * pow(dt, -2.) * Qc_inv, 4. / dt * Qc_inv;
+        Eigen::MatrixXd Qi_inv(n_dofs_, n_dofs_);
+        Qi_inv << 12. * pow(dt_, -3.) * Qc_inv, -6. * pow(dt_, -2.) * Qc_inv,
+                  -6. * pow(dt_, -2.) * Qc_inv, 4. / dt_ * Qc_inv;
 
-    this->meas_model_lambda_ = Qi_inv;
-
-    // Store Jacobian as it is linear
-    this->linear_ = true;
-    J_ = Eigen::MatrixXd::Zero(n_dofs_, n_dofs_ * 2);
-    J_ << I, dt * I, -1 * I, O,
-        O, I, O, -1 * I;
+        this->meas_model_lambda_ = Qi_inv;
+        
+        // Store Jacobian as it is linear for 4D
+        this->linear_ = true;
+        J_ = Eigen::MatrixXd::Zero(n_dofs_, n_dofs_ * 2);
+        J_ << I, dt * I, -1 * I, O,
+              O, I, O, -1 * I;
+    }
 }
 
 Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
 {
-    return J_ * X;
+    if (n_dofs_ == 5) {
+        // X contains [x1, y1, xdot1, ydot1, theta1, x2, y2, xdot2, ydot2, theta2]
+        Eigen::VectorXd h = Eigen::VectorXd::Zero(5);
+        
+        // Position constraint: x2 = x1 + xdot1 * dt, use predicted - actual for consistency
+        h(0) = X(0) + X(2)*dt_ - X(5);
+        h(1) = X(1) + X(3)*dt_ - X(6);
+        
+        // Velocity constraint: xdot2 = xdot1 (constant velocity)
+        h(2) = X(2) - X(7);
+        h(3) = X(3) - X(8);
+        
+        // Orientation constraint: theta should align with velocity direction
+        double xdot2 = X(7), ydot2 = X(8);
+        double v2 = xdot2*xdot2 + ydot2*ydot2;
+        double v_mag = std::sqrt(v2);
+        
+        // Only apply orientation constraint when moving at reasonable speed
+        // This prevents oscillations at low speeds
+        double v_min = v0_ * 0.1;  // Minimum velocity to apply constraint
+        
+        double theta_diff = 0.0;
+        if (std::isfinite(X(9)) && v_mag > v_min) {
+            // theta should align with velocity direction
+            // Since Y is down, we need to negate it for proper angle calculation
+            double theta_vel = -wrapAngle(std::atan2(ydot2, xdot2));
+            // Use angle_diff for consistent angle wrapping
+            theta_diff = angle_diff(theta_vel, X(9));
+            
+            // Apply smooth transition based on velocity magnitude
+            // Use tanh for smoother, bounded transition than sigmoid
+            double k = 3.0 / v0_;  // Transition rate
+            double w = 0.5 * (1.0 + std::tanh(k * (v_mag - v0_ * 0.3)));
+            
+            // Scale the error by the weight
+            h(4) = w * theta_diff;
+        } else {
+            // At low speeds, don't constrain orientation
+            h(4) = 0.0;
+        }
+    
+        return h;
+    } else {
+        // Original 4D implementation
+        return J_ * X;
+    }
 }
 
 Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
 {
-    return J_;
+    if (n_dofs_ == 5) {
+        // 5D state Jacobian with instantaneous alignment
+        Eigen::MatrixXd J = Eigen::MatrixXd::Zero(5, 10);
+        
+        // Position and velocity constraints Jacobian - same as 4D case
+        J(0, 0) = 1;  J(0, 2) = dt_;  J(0, 5) = -1;  // dx
+        J(1, 1) = 1;  J(1, 3) = dt_;  J(1, 6) = -1;  // dy
+        J(2, 2) = 1;  J(2, 7) = -1;  // dxdot
+        J(3, 3) = 1;  J(3, 8) = -1;  // dydot
+        
+        // Orientation constraint Jacobian (nonlinear due to atan2)
+        double xdot2 = X(7), ydot2 = X(8);
+        double v2 = xdot2*xdot2 + ydot2*ydot2;
+        double v_mag = std::sqrt(v2);
+        
+        // Minimum velocity threshold
+        double v_min = v0_ * 0.1;
+        
+        if (v_mag > v_min) {
+            // Compute weight using tanh for smooth transition
+            double k = 3.0 / v0_;
+            double tanh_arg = k * (v_mag - v0_ * 0.3);
+            double tanh_val = std::tanh(tanh_arg);
+            double w = 0.5 * (1.0 + tanh_val);
+            
+            // d theta_vel / d xdot2, d ydot2 with stronger regularization
+            double v2_reg = v2 + v_min * v_min;
+            double dthetad_x =  ydot2 / v2_reg;
+            double dthetad_y = -xdot2 / v2_reg;
+            
+            // Product-rule term discarded
+            J(4, 7) = w * dthetad_x;  // wrt xdot2
+            J(4, 8) = w * dthetad_y;  // wrt ydot2
+            J(4, 9) = -w;  // wrt theta2
+            
+        } else {
+            // Below minimum velocity, no constraint
+            J.row(4).setZero();
+        }
+        return J;
+    } else {
+        // Original 4D implementation
+        return J_;
+    }
 }
 
 void DynamicsFactor::draw()
@@ -293,33 +416,74 @@ void DynamicsFactor::draw()
 // The factor has 0 energy if the variables are further away than the safety distance. skip_ = true in this case.
 /********************************************************************************************/
 
-InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
+InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                                    float sigma, const Eigen::VectorXd &measurement,
-                                   float robot_radius)
-    : Factor{f_id, r_id, variables, sigma, measurement}
+                                   float robot_radius,
+                                   const Eigen::Vector2d& robot1_dims,
+                                   const Eigen::Vector2d& robot2_dims,
+                                   double robot1_angle_offset,
+                                   double robot2_angle_offset)
+    : Factor{f_id, r_id, variables, sigma, measurement, n_dofs},
+      robot1_dimensions_(robot1_dims),
+      robot2_dimensions_(robot2_dims),
+      robot1_angle_offset_(robot1_angle_offset),
+      robot2_angle_offset_(robot2_angle_offset)
 {
     factor_type_ = INTERROBOT_FACTOR;
-    float eps = 0.2 * robot_radius;
-    this->safety_distance_ = 2 * robot_radius + eps;
-    this->delta_jac = 1e-2;
+    
+    // If dimensions not provided, use sphere approximation
+    if (robot1_dimensions_.isZero()) {
+        robot1_dimensions_ = Eigen::Vector2d(2 * robot_radius, 2 * robot_radius);
+    }
+    if (robot2_dimensions_.isZero()) {
+        robot2_dimensions_ = Eigen::Vector2d(2 * robot_radius, 2 * robot_radius);
+    }
+    
+    if (n_dofs == 5) {
+        double max_ext1 = std::max(robot1_dimensions_(0), robot1_dimensions_(1));
+        double max_ext2 = std::max(robot2_dimensions_(0), robot2_dimensions_(1));
+        this->safety_distance_ = (max_ext1 + max_ext2) / 2.0 + 0.5;
+    } else {
+        float eps = 0.2 * robot_radius;
+        this->safety_distance_ = 2 * robot_radius + eps;
+    }
+    this->delta_jac = 1e-3;
 }
 
 Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
 {
     Eigen::MatrixXd h = Eigen::MatrixXd::Zero(z_.rows(), z_.cols());
 
-    Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
-    X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2);
+    // For 5D state: [x, y, xdot, ydot, theta]
+    if (n_dofs_ == 5) {
+        Eigen::Vector2d X_diff = X(seqN(0, 2)) - X(seqN(5, 2));
+        X_diff += 1e-6 * r_id_ * Eigen::Vector2d::Ones();
 
-    double r = X_diff.norm();
-    if (r <= safety_distance_)
-    {
-        this->skip_flag = false;
-        h(0) = 1.f * (1 - r / safety_distance_);
-    }
-    else
-    {
-        this->skip_flag = true;
+        double r = X_diff.norm();
+        if (r <= safety_distance_)
+        {
+            this->skip_flag = false;
+            h(0) = 1.f * (1 - r / safety_distance_);
+        }
+        else
+        {
+            this->skip_flag = true;
+        }
+    } else {
+        // Original 4D implementation (sphere approximation)
+        Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
+        X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2);
+
+        double r = X_diff.norm();
+        if (r <= safety_distance_)
+        {
+            this->skip_flag = false;
+            h(0) = 1.f * (1 - r / safety_distance_);
+        }
+        else
+        {
+            this->skip_flag = true;
+        }
     }
     return h;
 }
@@ -327,20 +491,36 @@ Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
 Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
 {
     Eigen::MatrixXd J = Eigen::MatrixXd::Zero(z_.rows(), n_dofs_ * 2);
-    Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
-    X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2); // Add a tiny random offset to avoid div/0 errors
-    double r = X_diff.norm();
-    if (r <= safety_distance_)
-    {
-        J(0, seqN(0, n_dofs_ / 2)) = -1.f / safety_distance_ / r * X_diff;
-        J(0, seqN(n_dofs_, n_dofs_ / 2)) = 1.f / safety_distance_ / r * X_diff;
+    if (n_dofs_ == 5) {
+        Eigen::Vector2d X_diff = X(seqN(0, 2)) - X(seqN(5, 2));
+        X_diff += 1e-6 * r_id_ * Eigen::Vector2d::Ones();
+        double r = X_diff.norm();
+        if (r <= safety_distance_) {
+            J(0, seqN(0, 2)) = -1.f / safety_distance_ / r * X_diff;
+            J(0, seqN(5, 2)) = 1.f / safety_distance_ / r * X_diff;
+        }
+    } else {
+        // Original 4D implementation
+        Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
+        X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2); // Add a tiny random offset to avoid div/0 errors
+        double r = X_diff.norm();
+        if (r <= safety_distance_)
+        {
+            J(0, seqN(0, n_dofs_ / 2)) = -1.f / safety_distance_ / r * X_diff;
+            J(0, seqN(n_dofs_, n_dofs_ / 2)) = 1.f / safety_distance_ / r * X_diff;
+        }
     }
     return J;
 }
 
 bool InterrobotFactor::skip_factor()
 {
-    this->skip_flag = ((X_(seqN(0, n_dofs_ / 2)) - X_(seqN(n_dofs_, n_dofs_ / 2))).squaredNorm() >= safety_distance_ * safety_distance_);
+    if (n_dofs_ == 5) {
+        this->skip_flag = ((X_(seqN(0, 2)) - X_(seqN(5, 2))).squaredNorm() >= safety_distance_ * safety_distance_);
+    } else {
+        // Original 4D implementation
+        this->skip_flag = ((X_(seqN(0, n_dofs_ / 2)) - X_(seqN(n_dofs_, n_dofs_ / 2))).squaredNorm() >= safety_distance_ * safety_distance_);
+    }
     return this->skip_flag;
 }
 
@@ -351,6 +531,97 @@ void InterrobotFactor::draw()
     if (!v_0->valid_ || !v_1->valid_)
     {
         return;
+    }
+    if (!dbg) {
+        if (n_dofs_ == 5) {
+            Eigen::Vector2d pos1(X_(0), X_(1));
+            Eigen::Vector2d pos2(X_(5), X_(6));
+
+            double theta1 = X_(4), theta2 = X_(9);
+            double th1 = theta1 + robot1_angle_offset_, th2 = theta2 + robot2_angle_offset_;
+            
+            OBB2D obb1(pos1, robot1_dimensions_ / 2.0, th1);
+            OBB2D obb2(pos2, robot2_dimensions_ / 2.0, th2);
+
+            auto [axis1_1, axis1_2] = obb1.getAxes();
+            auto [axis2_1, axis2_2] = obb2.getAxes();
+
+            const auto& [dist, n_hat] = GeometryUtils::getOBBDistance(obb1, obb2);
+            
+            std::ostringstream oss;
+            oss << "ts=" << v_0->ts_ << ", th1=[" << th1 << "], th2=[" << th2 << "]\n";
+
+            oss << "var 1=[";
+            for (int i = 0; i < n_dofs_; ++i) {
+                oss << X_(i);
+                if (i < n_dofs_-1) oss << ",";
+            }
+            oss << "]\n";
+
+            oss << "axis1_1=[";
+            for (int i = 0; i < axis1_1.size(); ++i) {
+                oss << axis1_1(i);
+                if (i < axis1_1.size() - 1) oss << ",";
+            }
+            oss << "], axis1_2=[";
+            for (int i = 0; i < axis1_2.size(); ++i) {
+                oss << axis1_2(i);
+                if (i < axis1_2.size() - 1) oss << ",";
+            }
+            oss << "]\n";
+
+            oss << "var 2=[";
+            for (int i = n_dofs_; i < n_dofs_*2; ++i) {
+                oss << X_(i);
+                if (i < n_dofs_*2-1) oss << ",";
+            }
+            oss << "]\n";
+
+            oss << "axis2_1=[";
+            for (int i = 0; i < axis2_1.size(); ++i) {
+                oss << axis2_1(i);
+                if (i < axis2_1.size() - 1) oss << ",";
+            }
+            oss << "], axis2_2=[";
+            for (int i = 0; i < axis2_2.size(); ++i) {
+                oss << axis2_2(i);
+                if (i < axis2_2.size() - 1) oss << ",";
+            }
+            oss << "]\n";
+
+            oss << "dist=[" << dist << "], sep axis=[";
+            for (int i = 0; i < n_hat.size(); ++i) {
+                oss << n_hat(i);
+                if (i < n_hat.size() - 1) oss << ",";
+            }
+            oss << "]\n";
+
+            auto h = this->h_func_(X_);
+            auto J = this->J_func_(X_);
+
+            oss << "h=[";
+            for (int r = 0; r < h.rows(); ++r) {
+                for (int c = 0; c < h.cols(); ++c) {
+                    oss << h(r, c);
+                    if (c < h.cols() - 1) oss << ",";
+                }
+                if (r < h.rows() - 1) oss << ";";
+            }
+            oss << "]\n";
+
+            oss << "J=[";
+            for (int r = 0; r < J.rows(); ++r) {
+                for (int c = 0; c < J.cols(); ++c) {
+                    oss << J(r, c);
+                    if (c < J.cols() - 1) oss << ",";
+                }
+                if (r < J.rows() - 1) oss << ";";
+            }
+            oss << "]\n";
+
+            print(oss.str());
+        }
+        dbg = true;
     }
     auto diff = v_0->mu_({0, 1}) - v_1->mu_({0, 1});
     if (diff.norm() <= safety_distance_)
@@ -387,9 +658,9 @@ Eigen::MatrixXd ObstacleFactor::h_func_(const Eigen::VectorXd &X)
 /********************************************************************************************/
 // Factor for dynamic obstalces.
 /********************************************************************************************/
-DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables,
+DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                                              float sigma, const Eigen::VectorXd &measurement, float robot_radius, std::shared_ptr<DynamicObstacle> obs)
-    : Factor{f_id, r_id, variables, sigma, measurement}, robot_radius_(robot_radius), obs_(std::move(obs))
+    : Factor{f_id, r_id, variables, sigma, measurement, n_dofs}, robot_radius_(robot_radius), obs_(std::move(obs))
 {
     factor_type_ = DYNAMIC_OBSTACLE_FACTOR;
     delta_t_ = variables.front()->ts_ * globals.T0;
@@ -443,25 +714,32 @@ void DynamicObstacleFactor::draw()
     double dist_sqr = neighbours_.front().second;
     if (dist_sqr <= (safety_distance_ * safety_distance_))
     {
-        if (!dbg)
-        {
-            std::ostringstream oss;
-            for (const auto& nb: neighbours_){
-                oss << nb.second << ", ";
-            }
-            print(oss.str());
-            dbg = true;
-        }
         auto nb = neighbours_.front().first;
         auto state_t = obs_->states_.at(int(delta_t_/globals.T0));
         DrawCylinderEx(Vector3{(float)v_0->mu_(0), globals.ROBOT_RADIUS, (float)v_0->mu_(1)},
-                       Vector3{(float)nb(0), globals.ROBOT_RADIUS, (float)nb(1)},
-                       0.1, 0.1, 4, RED);
-        DrawModel(*obs_->geom_->model_, Vector3{(float)state_t[0], obs_->elevation_, (float)state_t[1]}, 1.f, ColorAlpha(DARKGREEN, 0.2f));
+        Vector3{(float)nb(0), globals.ROBOT_RADIUS, (float)nb(1)},
+        0.1, 0.1, 4, RED);
+        
+        float rotation = wrapAngle(state_t[4] + obs_->geom_->orientation_offset);
+        // Add the model's default offset (similar to robots)
+        float rotation_degrees = rotation * (180.0f / M_PI);
+        DrawModelEx(obs_->geom_->model,
+            Vector3{(float)state_t[0], -obs_->geom_->boundingBox.min.y, (float)state_t[1]},
+            Vector3{0.0f, 1.0f, 0.0f},  // Rotate around Y axis
+            rotation_degrees,           // Rotation angle in degrees
+            Vector3{1.0f, 1.0f, 1.0f},  // Scale
+            ColorAlpha(DARKGREEN, 0.2f)
+        );               // Color tint
+            
         DrawSphere(Vector3{(float)v_0->mu_(0), robot_radius_, (float)v_0->mu_(1)}, 0.8 * robot_radius_, ColorAlpha(DARKGREEN, 0.2f));
         for (const auto& nb : neighbours_) {
             auto nb_pos = nb.first;
             DrawSphere(Vector3{(float)nb_pos(0), robot_radius_, (float)nb_pos(1)}, 0.2 * robot_radius_, ColorAlpha(DARKBLUE, 0.2f));
         }
-    }
+        if (!dbg)
+        {
+            print(rotation_degrees);
+            dbg = true;
+        }
+        }
 }

@@ -15,6 +15,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     nlohmann::json j;
     config_file >> j;
     ASSETS_DIR = j["ASSETS_DIR"];
+    N_DOFS = j.value("N_DOFS", 4);
 
     // Display parameters
     DISPLAY = static_cast<bool>((int)j["DISPLAY"]);;
@@ -29,6 +30,8 @@ void Globals::parse_global_args(std::ifstream& config_file){
     SEED = j["SEED"];
     TIMESTEP = j["TIMESTEP"];
     MAX_TIME = j["MAX_TIME"];
+    NEW_OBSTACLES_NEEDED = static_cast<bool>((int)j["NEW_OBSTACLES_NEEDED"]);
+    NEW_ROBOTS_NEEDED = static_cast<bool>((int)j["NEW_ROBOTS_NEEDED"]);
     NUM_ROBOTS = j["NUM_ROBOTS"];
     T_HORIZON = j["T_HORIZON"];
     MAX_HORIZON_DIST = j.value("MAX_HORIZON_DIST", 15);
@@ -38,6 +41,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     COMMS_FAILURE_RATE = j["COMMS_FAILURE_RATE"];
     FORMATION = j["FORMATION"];
     OBSTACLE_FILE = j["OBSTACLE_FILE"];
+    ITERATE_STEPS = j.value("ITERATE_STEPS", 1);
 
     // GBP parameters
     SIGMA_FACTOR_DYNAMICS = j["SIGMA_FACTOR_DYNAMICS"];
@@ -47,8 +51,6 @@ void Globals::parse_global_args(std::ifstream& config_file){
 
     // Dynamic Obstacle parameters
     SIGMA_FACTOR_DYNAMIC_OBSTACLE = j.value("SIGMA_FACTOR_DYNAMIC_OBSTACLE", 0.05);
-    NEW_OBSTACLES_NEEDED = static_cast<bool>((int)j.value("NEW_OBSTACLES_NEEDED", 1));
-    ITERATE_STEPS = j.value("ITERATE_STEPS", 1);
     RBF_GAMMA = j.value("RBF_GAMMA", 1.0);
     NUM_NEIGHBOURS = j.value("NUM_NEIGHBOURS", 1);
     OBSTALCE_SENSOR_RADIUS = j.value("OBSTALCE_SENSOR_RADIUS", 3.0);
@@ -93,5 +95,4 @@ void Globals::post_parsing()
         print("Capping MAX_SPEED parameter at ", MAX_SPEED);
     }
     T0 = ROBOT_RADIUS/2.f / MAX_SPEED; // Time between current state and next state of planned path
-
 }

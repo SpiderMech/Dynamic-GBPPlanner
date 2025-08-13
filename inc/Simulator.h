@@ -13,6 +13,7 @@
 #include <Graphics.h>
 #include <gbp/Variable.h>
 #include <nanoflann.h>
+#include <TaskScheduler.h>
 
 #include <raylib.h>
 #include <rlights.h>
@@ -25,6 +26,7 @@ class Robot;
 class DynamicObstacle;
 class Graphics;
 class TreeOfRobots;
+class MetricsCollector;
 
 /************************************************************************************/
 // The main Simulator. This is where the magic happens.
@@ -40,6 +42,9 @@ public:
 
     // Pointer to Graphics class which hold all the camera, graphics and models for display
     Graphics* graphics;
+
+    // Pointer to task scheduler interface
+    TaskScheduler* scheduler;
 
     // kd-tree to store the positions of the robots at each timestep.
     // This is used for calculating the neighbours of robots blazingly fast.
@@ -69,6 +74,8 @@ public:
     bool new_obstacles_needed_ = true;                           // Whether or not to create new obstacles. (Some formations are dynamicaly changing)
     bool symmetric_factors = false;                              // If true, when inter-robot factors need to be created between two robots,
                                                                  // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
+
+    MetricsCollector* metrics;                                   // Helper class to record metrics during evaluation
 
 
     /*******************************************************************************/

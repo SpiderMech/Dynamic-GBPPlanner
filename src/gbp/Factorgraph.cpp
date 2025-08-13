@@ -153,36 +153,36 @@ void FactorGraph::print_graph_info() {
         oss << "Var " << var->v_id_ << ", ts: " << var->ts_ << ", pos: " << var->mu_.transpose() << "\n";
         
         // Print normalised gradient directions and magnitudes
-        // for (auto& [f_key, g_i] : grads) {
-        //     auto fac = this->factors_[f_key];
-        //     double mag   = mags[f_key];
-        //     double score = (sum_mag > 0.0 ? mag / sum_mag : 0.0);
+        for (auto& [f_key, g_i] : grads) {
+            auto fac = this->factors_[f_key];
+            double mag   = mags[f_key];
+            double score = (sum_mag > 0.0 ? mag / sum_mag : 0.0);
         
-        //     Eigen::VectorXd dir = (mag > 0.0
-        //         ? Eigen::VectorXd(grads[f_key] / mag)
-        //         : Eigen::VectorXd::Zero(var->mu_.size()));
+            Eigen::VectorXd dir = (mag > 0.0
+                ? Eigen::VectorXd(grads[f_key] / mag)
+                : Eigen::VectorXd::Zero(var->mu_.size()));
         
-        //     // Customise factor name printing
-        //     auto fac_type = fac->factor_type_;
-        //     std::ostringstream fac_name;
-        //     fac_name << "    " << fac_type_names[fac_type];
-        //     if (fac_type == DYNAMICS_FACTOR) {
-        //         auto vars = fac->variables_;
-        //         if (vars.size() < 2) {
-        //             print("Var size error", fac_type);
-        //             return;
-        //         }
-        //         fac_name << " (" << vars[0]->v_id_ << "-" << vars[1]->v_id_ << ")";
-        //     }
+            // Customise factor name printing
+            auto fac_type = fac->factor_type_;
+            std::ostringstream fac_name;
+            fac_name << "    " << fac_type_names[fac_type];
+            if (fac_type == DYNAMICS_FACTOR) {
+                auto vars = fac->variables_;
+                if (vars.size() < 2) {
+                    print("Var size error", fac_type);
+                    return;
+                }
+                fac_name << " (" << vars[0]->v_id_ << "-" << vars[1]->v_id_ << ")";
+            }
 
-        //     // Output
-        //     oss << fac_name.str() << ": " << "score=" << score << "  dir=[";
-        //     for (int i = 0; i < dir.size(); ++i) {
-        //         if (i) oss << ", ";
-        //         oss << dir[i];
-        //     }
-        //     oss << "]\n";
-        // }
+            // Output
+            oss << fac_name.str() << ": " << "score=" << score << "  dir=[";
+            for (int i = 0; i < dir.size(); ++i) {
+                if (i) oss << ", ";
+                oss << dir[i];
+            }
+            oss << "]\n";
+        }
     }
     print(oss.str());
 }

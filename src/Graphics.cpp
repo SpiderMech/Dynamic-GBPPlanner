@@ -3,6 +3,7 @@
 // This code is licensed (see LICENSE for details)
 /**************************************************************************************/
 #include <Graphics.h>
+#include <tuple>
 
 /**************************************************************************/
 // Graphics class that deals with the nitty-gritty of display.
@@ -42,11 +43,10 @@ Graphics::Graphics(Image obstacleImg) : obstacleImg_(ImageCopy(obstacleImg))
     int ambientLoc = GetShaderLocation(lightShader_, "ambient");
     float temp[4] = {0.1f, 0.1f, 0.1f, 1.0f};
     SetShaderValue(lightShader_, ambientLoc, temp, SHADER_UNIFORM_VEC4);
-
-    // Assign our lighting shader to robot model
-    robotModel_ = LoadModelFromMesh(GenMeshSphere(1., 50.0f, 50.0f));
-    robotModel_.materials[0].shader = lightShader_;
-    robotModel_.materials[0].maps[0].color = WHITE;
+    
+    // Load all robot and obstacle models with their bounding boxes
+    loadRobotModels();
+    loadObstacleModels();
 
     // Height map
     Mesh mesh = GenMeshHeightmap(obstacleImg_, (Vector3){1.f * globals.WORLD_SZ, 1.f * globals.ROBOT_RADIUS, 1.f * globals.WORLD_SZ}); // Generate heightmap mesh (RAM and VRAM)
@@ -122,188 +122,253 @@ void Graphics::update_camera()
     }
 }
 
-// Function to create a cubic Geometry pointer based on specified dimensions
-std::shared_ptr<IGeometry> Graphics::GenCubeGeom(float width, float height, float depth, Color color)
+/* Compute the minimal axis-aligned bounding box for a mesh */
+BoundingBox Graphics::computeMeshBoundingBox(const Mesh& mesh)
+{
+    BoundingBox box;
+    
+    if (mesh.vertexCount == 0) {
+        box.min = Vector3{0, 0, 0};
+        box.max = Vector3{0, 0, 0};
+        return box;
+    }
+    
+    // Initialize with first vertex
+    box.min = Vector3{mesh.vertices[0], mesh.vertices[1], mesh.vertices[2]};
+    box.max = box.min;
+    
+    // Find min and max for each axis
+    for (int i = 0; i < mesh.vertexCount; i++) {
+        float x = mesh.vertices[i * 3 + 0];
+        float y = mesh.vertices[i * 3 + 1];
+        float z = mesh.vertices[i * 3 + 2];
+        
+        box.min.x = fminf(box.min.x, x);
+        box.min.y = fminf(box.min.y, y);
+        box.min.z = fminf(box.min.z, z);
+        
+        box.max.x = fmaxf(box.max.x, x);
+        box.max.y = fmaxf(box.max.y, y);
+        box.max.z = fmaxf(box.max.z, z);
+    }
+    
+    return box;
+}
+
+/* Load all robot models and compute their bounding boxes */
+void Graphics::loadRobotModels()
+{
+    // Load SPHERE model (default representation)
+    {
+        Model sphereModel = LoadModelFromMesh(GenMeshSphere(1.0f, 50.f, 50.f));
+        sphereModel.materials[0].shader = lightShader_;
+        sphereModel.materials[0].maps[0].color = WHITE;
+        
+        // For a unit sphere, bounding box is simple
+        BoundingBox sphereBox = {
+            Vector3{-1.0f, -1.0f, -1.0f},  // min
+            Vector3{1.0f, 1.0f, 1.0f}       // max
+        };
+        
+        // Dimensions for unit sphere
+        Vector3 sphereDims = {2.0f, 2.0f, 2.0f};
+        
+        // Store in map
+        robotModels_[RobotType::SPHERE] = std::make_shared<RobotModelInfo>(sphereModel, sphereBox, sphereDims, 0.0);
+    }
+    
+    // Load vehicle models (CAR, BUS)
+    {
+        std::vector<std::tuple<RobotType, std::string, double>> model_paths = {
+            {RobotType::CAR, globals.ASSETS_DIR + "models/Car.obj", M_PI / 2.0},
+            {RobotType::BUS, globals.ASSETS_DIR + "models/Bus.obj", 0.0}
+        };
+
+        for (const auto& [type, model_path, of] : model_paths) {
+            Model model = LoadModel(model_path.c_str());
+            model.materials[0].shader = lightShader_;
+            model.materials[0].maps[0].color = WHITE;
+            
+            // Compute bounding box from the mesh
+            BoundingBox bbox = computeMeshBoundingBox(model.meshes[0]);
+            
+            // Calculate dimensions
+            Vector3 dims = {
+                bbox.max.x - bbox.min.x,
+                bbox.max.y - bbox.min.y,
+                bbox.max.z - bbox.min.z
+            };
+            
+            // Store in map
+            robotModels_[type] = std::make_shared<RobotModelInfo>(model, bbox, dims, of);
+        }
+    }
+}
+
+void Graphics::loadObstacleModels() {
+    // Load vehicle models
+    {
+        std::vector<std::tuple<ObstacleType, std::string, double>> model_paths = {
+            {ObstacleType::BUS, globals.ASSETS_DIR + "models/Bus.obj", 0.0}
+        };
+
+        for (const auto& [type, model_path, of] : model_paths) {
+            // Store in map
+            obstacleModels_[type] = createCustomObstacleModel(model_path.c_str(), of);
+        }
+    }
+}
+
+/* Helper method to create box obstacle model with KDTree support */
+std::shared_ptr<ObstacleModelInfo> Graphics::createBoxObstacleModel(float width, float height, float depth, double angle_offset, Color color)
 {
     Model model = LoadModelFromMesh(GenMeshCube(width, height, depth));
-    // Create shared pointer to model with custom deleter for raylib
-    auto model_ptr = std::shared_ptr<Model>(
-        new Model(model),
-        [](Model *m)
-        { UnloadModel(*m); delete m; });
-
-    model_ptr->materials[0].shader = lightShader_;
-    model_ptr->materials[0].maps[0].color = WHITE;
-
-    return std::make_shared<BoxGeometry>(model_ptr,
-                                         Eigen::Vector3d{-width * 0.5f, -height * 0.5f, -depth * 0.5f},
-                                         Eigen::Vector3d{ width * 0.5f,  height * 0.5f,  depth * 0.5f},
-                                         color);
-}
-
-// Function to create a Geometry using imported mesh file
-std::shared_ptr<IGeometry> Graphics::GenCustomGeom(const std::string_view mesh_file, Color color)
-{
-    if (mesh_file.empty())
-    {
-        throw std::runtime_error("GenCustomGeom:: mesh_file cannot be empty.");
-    }
-
-    Model model = LoadModel(mesh_file.data());
-    // Create shared pointer to model with custom deleter for raylib
-    auto model_ptr = std::shared_ptr<Model>(
-        new Model(model),
-        [](Model *m)
-        { UnloadModel(*m); delete m; });
-
-    model_ptr->materials[0].shader = lightShader_;
-    model_ptr->materials[0].maps[0].color = WHITE;
-
-    Mesh &mesh_ref = model_ptr->meshes[0];
-    std::vector<Eigen::Vector3d> cloud;
-    cloud.reserve(mesh_ref.triangleCount);
-    for (size_t t = 0; t < mesh_ref.triangleCount; ++t)
-    {
-        unsigned short i0 = mesh_ref.indices[3 * t + 0];
-        unsigned short i1 = mesh_ref.indices[3 * t + 1];
-        unsigned short i2 = mesh_ref.indices[3 * t + 2];
-
-        Vector3 v0{
-            mesh_ref.vertices[3 * i0 + 0],
-            mesh_ref.vertices[3 * i0 + 1],
-            mesh_ref.vertices[3 * i0 + 2]};
-        Vector3 v1{
-            mesh_ref.vertices[3 * i1 + 0],
-            mesh_ref.vertices[3 * i1 + 1],
-            mesh_ref.vertices[3 * i1 + 2]};
-        Vector3 v2{
-            mesh_ref.vertices[3 * i2 + 0],
-            mesh_ref.vertices[3 * i2 + 1],
-            mesh_ref.vertices[3 * i2 + 2]};
-
-        cloud.emplace_back(
-            (v0.x + v1.x + v2.x) / 3.0,
-            (v0.y + v1.y + v2.y) / 3.0,
-            (v0.z + v1.z + v2.z) / 3.0);
-    }
-    return std::make_shared<MeshGeometry>(model_ptr, cloud, color);
-}
-
-// Function to Create obstacle model directly from self-defined mesh object
-std::shared_ptr<IGeometry> Graphics::GenPolyGeom(Mesh &mesh, Color color)
-{
-    Model model = LoadModelFromMesh(mesh);
-
-    // Create shared pointer to model with custom deleter for raylib
-    auto model_ptr = std::shared_ptr<Model>(
-        new Model(model),
-        [](Model *m)
-        { UnloadModel(*m); delete m; });
-
-    model_ptr->materials[0].shader = lightShader_;
-    model_ptr->materials[0].maps[0].color = WHITE;
-
-    std::vector<Eigen::Vector3d> cloud;
-    cloud.reserve(mesh.triangleCount);
-
-    for (size_t t = 0; t < mesh.triangleCount; ++t)
-    {
-        unsigned short i0 = mesh.indices[3 * t + 0];
-        unsigned short i1 = mesh.indices[3 * t + 1];
-        unsigned short i2 = mesh.indices[3 * t + 2];
-
-        Vector3 v0{
-            mesh.vertices[3 * i0 + 0],
-            mesh.vertices[3 * i0 + 1],
-            mesh.vertices[3 * i0 + 2]};
-        Vector3 v1{
-            mesh.vertices[3 * i1 + 0],
-            mesh.vertices[3 * i1 + 1],
-            mesh.vertices[3 * i1 + 2]};
-        Vector3 v2{
-            mesh.vertices[3 * i2 + 0],
-            mesh.vertices[3 * i2 + 1],
-            mesh.vertices[3 * i2 + 2]};
-
-        cloud.emplace_back(
-            (v0.x + v1.x + v2.x) / 3.0,
-            (v0.y + v1.y + v2.y) / 3.0,
-            (v0.z + v1.z + v2.z) / 3.0);
-    }
-    return std::make_shared<MeshGeometry>(model_ptr, cloud, color);
-}
-
-/* Functions for generating specific meshes */
-Mesh Graphics::genMeshPyramid(float base, float height)
-{
-    Mesh mesh = {0};
-    mesh.vertexCount = 5;
-    mesh.triangleCount = 6;
-
-    float b2 = base / 2.0f;
-
-    // Allocate memory
-    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.indices = (unsigned short *)MemAlloc(mesh.triangleCount * 3 * sizeof(unsigned short));
-
-    // Define vertices (base triangle: y = -h2, top triangle: y = +h2)
-    float verts[15] = {
-        -b2, 0.0f, -b2,    // v0: bottom left
-        b2, 0.0f, -b2,     // v1: bottom right
-        b2, 0.0f, b2,      // v2: top right
-        -b2, 0.0f, b2,     // v3: top left
-        0.0f, height, 0.0f // v4: apex
+    model.materials[0].shader = lightShader_;
+    model.materials[0].maps[0].color = WHITE;
+    
+    // Compute bounding box
+    BoundingBox box = {
+        Vector3{-width * 0.5f, -height * 0.5f, -depth * 0.5f},
+        Vector3{width * 0.5f, height * 0.5f, depth * 0.5f}
     };
-    memcpy(mesh.vertices, verts, sizeof(verts));
-
-    // Define triangle indices (each face = 2 triangles except bases)
-    unsigned short inds[18] = {
-        // base faces (2 triangles), winding reversed for outward normals
-        2, 1, 0,
-        3, 2, 0,
-        // side faces (4 triangles), winding reversed
-        4, 1, 0,
-        4, 2, 1,
-        4, 3, 2,
-        4, 0, 3};
-    memcpy(mesh.indices, inds, sizeof(inds));
-
-    // --- compute normals for lighting ---
-    mesh.normals = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    // Zero out normals
-    memset(mesh.normals, 0, mesh.vertexCount * 3 * sizeof(float));
-    // For each triangle, accumulate face normals into vertex normals
-    for (int t = 0; t < mesh.triangleCount; ++t)
-    {
-        unsigned short i0 = inds[3 * t + 0];
-        unsigned short i1 = inds[3 * t + 1];
-        unsigned short i2 = inds[3 * t + 2];
-        Vector3 p0 = {mesh.vertices[3 * i0 + 0], mesh.vertices[3 * i0 + 1], mesh.vertices[3 * i0 + 2]};
-        Vector3 p1 = {mesh.vertices[3 * i1 + 0], mesh.vertices[3 * i1 + 1], mesh.vertices[3 * i1 + 2]};
-        Vector3 p2 = {mesh.vertices[3 * i2 + 0], mesh.vertices[3 * i2 + 1], mesh.vertices[3 * i2 + 2]};
-        Vector3 faceNorm = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(p1, p0), Vector3Subtract(p2, p0)));
-        // accumulate normals
-        mesh.normals[3 * i0 + 0] += faceNorm.x;
-        mesh.normals[3 * i0 + 1] += faceNorm.y;
-        mesh.normals[3 * i0 + 2] += faceNorm.z;
-        mesh.normals[3 * i1 + 0] += faceNorm.x;
-        mesh.normals[3 * i1 + 1] += faceNorm.y;
-        mesh.normals[3 * i1 + 2] += faceNorm.z;
-        mesh.normals[3 * i2 + 0] += faceNorm.x;
-        mesh.normals[3 * i2 + 1] += faceNorm.y;
-        mesh.normals[3 * i2 + 2] += faceNorm.z;
+    
+    Vector3 dims = {width, height, depth};
+    
+    auto obstacleInfo = std::make_shared<ObstacleModelInfo>(model, box, dims, angle_offset, color);
+    
+    // Generate point cloud for KDTree (grid on X-Z plane)
+    std::vector<Eigen::Vector2d> points;
+    int grid_size = 8;
+    auto lerp = [](double a, double b, double t) { return a + (b - a) * t; };
+    
+    for (int i = 0; i <= grid_size; ++i) {
+        for (int j = 0; j <= grid_size; ++j) {
+            double u = double(i) / grid_size;
+            double v = double(j) / grid_size;
+            Eigen::Vector2d pt;
+            pt.x() = lerp(-width * 0.5, width * 0.5, u);
+            pt.y() = lerp(-depth * 0.5, depth * 0.5, v);  // Z becomes Y in 2D
+            points.push_back(pt);
+        }
     }
-    // Normalize vertex normals
-    for (int v = 0; v < mesh.vertexCount; ++v)
-    {
-        Vector3 n = {mesh.normals[3 * v + 0], mesh.normals[3 * v + 1], mesh.normals[3 * v + 2]};
-        n = Vector3Normalize(n);
-        mesh.normals[3 * v + 0] = n.x;
-        mesh.normals[3 * v + 1] = n.y;
-        mesh.normals[3 * v + 2] = n.z;
-    }
-    // --- end normals computation ---
+    
+    obstacleInfo->initializeKDTree(points);
+    return obstacleInfo;
+}
 
-    UploadMesh(&mesh, false);
-    return mesh;
+/* Helper method to create custom obstacle model from file with KDTree support */
+std::shared_ptr<ObstacleModelInfo> Graphics::createCustomObstacleModel(const std::string_view mesh_file, double angle_offset, Color color, bool use_bbox)
+{
+    if (mesh_file.empty()) {
+        throw std::runtime_error("createCustomObstacleModel: mesh_file cannot be empty.");
+    }
+    
+    Model model = LoadModel(mesh_file.data());
+    model.materials[0].shader = lightShader_;
+    model.materials[0].maps[0].color = WHITE;
+    
+    Mesh& mesh_ref = model.meshes[0];
+    BoundingBox box = computeMeshBoundingBox(mesh_ref);
+    Vector3 dims = {
+        box.max.x - box.min.x,
+        box.max.y - box.min.y,
+        box.max.z - box.min.z
+    };
+    
+    auto obstacleInfo = std::make_shared<ObstacleModelInfo>(model, box, dims, angle_offset, color);
+    std::vector<Eigen::Vector2d> points;
+    
+    if (use_bbox) {
+        // Generate point cloud from bounding box (grid on X-Z plane)
+        int grid_size = 8;
+        auto lerp = [](double a, double b, double t) { return a + (b - a) * t; };
+        
+        for (int i = 0; i <= grid_size; ++i) {
+            for (int j = 0; j <= grid_size; ++j) {
+                double u = double(i) / grid_size;
+                double v = double(j) / grid_size;
+                Eigen::Vector2d pt;
+                pt.x() = lerp(box.min.x, box.max.x, u);
+                pt.y() = lerp(box.min.z, box.max.z, v);  // Z becomes Y in 2D
+                points.push_back(pt);
+            }
+        }
+    } else {
+        // Extract point cloud from mesh triangles (original behavior)
+        for (size_t t = 0; t < mesh_ref.triangleCount; ++t) {
+            unsigned short i0 = mesh_ref.indices[3 * t + 0];
+            unsigned short i1 = mesh_ref.indices[3 * t + 1];
+            unsigned short i2 = mesh_ref.indices[3 * t + 2];
+            
+            Vector3 v0 = {
+                mesh_ref.vertices[3 * i0 + 0],
+                mesh_ref.vertices[3 * i0 + 1],
+                mesh_ref.vertices[3 * i0 + 2]
+            };
+            Vector3 v1 = {
+                mesh_ref.vertices[3 * i1 + 0],
+                mesh_ref.vertices[3 * i1 + 1],
+                mesh_ref.vertices[3 * i1 + 2]
+            };
+            Vector3 v2 = {
+                mesh_ref.vertices[3 * i2 + 0],
+                mesh_ref.vertices[3 * i2 + 1],
+                mesh_ref.vertices[3 * i2 + 2]
+            };
+            
+            // Use triangle centroid in X-Z plane
+            Eigen::Vector2d pt;
+            pt.x() = (v0.x + v1.x + v2.x) / 3.0;
+            pt.y() = (v0.z + v1.z + v2.z) / 3.0;  // Z becomes Y in 2D
+            points.push_back(pt);
+        }
+    }
+    obstacleInfo->initializeKDTree(points);
+    return obstacleInfo;
+}
+
+// Implementation of ObstacleModelInfo methods
+void ObstacleModelInfo::initializeKDTree(const std::vector<Eigen::Vector2d>& points)
+{
+    if (points.empty()) {
+        throw std::runtime_error("ObstacleModelInfo::initializeKDTree called with empty point cloud.");
+    }
+    
+    // Copy points to matrix
+    mat_.resize(2, points.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        mat_.col(i) = points[i];
+    }
+    
+    // Build KDTree
+    kdtree_ = std::make_unique<KDTree>(2, std::cref(mat_));
+    kdtree_->index_->buildIndex();
+}
+
+std::vector<std::pair<Eigen::Vector2d, double>> ObstacleModelInfo::getNearestPoints(int k, const Eigen::Vector2d& query_pt) const
+{
+    if (!kdtree_) {
+        throw std::runtime_error("ObstacleModelInfo::getNearestPoints called before KDTree was built.");
+    }
+    
+    if (mat_.cols() == 0) {
+        throw std::runtime_error("ObstacleModelInfo::getNearestPoints called with empty point cloud.");
+    }
+    
+    if (k > mat_.cols()) {
+        k = mat_.cols();  // clamp to max available points
+    }
+    
+    std::vector<size_t> ret_indexes(k);
+    std::vector<double> out_dists_sqr(k);
+    nanoflann::KNNResultSet<double> resultSet(k);
+    resultSet.init(ret_indexes.data(), out_dists_sqr.data());
+    nanoflann::SearchParameters params;
+    kdtree_->index_->findNeighbors(resultSet, query_pt.data(), params);
+    
+    std::vector<std::pair<Eigen::Vector2d, double>> results;
+    for (int i = 0; i < k; ++i) {
+        results.emplace_back(mat_.col(ret_indexes[i]), out_dists_sqr[i]);
+    }
+    return results;
 }

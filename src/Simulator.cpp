@@ -8,6 +8,7 @@
 #include <DynamicObstacle.h>
 #include <Graphics.h>
 #include <Robot.h>
+#include "Metrics.hpp"
 #include <nanoflann.h>
 #include "cnpy/cnpy.h"
 #include <filesystem>
@@ -40,6 +41,10 @@ Simulator::Simulator()
     // However for calculation purposes the image needs to be inverted.
     ImageColorInvert(&obstacleImg);
     graphics = new Graphics(obstacleImg);
+
+    // Initialise helper classes
+    scheduler = new TaskScheduler(); /* Schedules tasks for robots/ obstacles */
+    metrics = new MetricsCollector();
 };
 
 /*******************************************************************************/
@@ -56,6 +61,7 @@ Simulator::~Simulator()
         delete graphics;
         CloseWindow();
     }
+    delete scheduler;
 };
 
 /*******************************************************************************/
@@ -67,16 +73,18 @@ void Simulator::draw()
         return;
 
     BeginDrawing();
-        ClearBackground(RAYWHITE);
-        BeginMode3D(graphics->camera3d);
-            // Draw Ground
-            DrawModel(graphics->groundModel_, graphics->groundModelpos_, 1., WHITE);
-            // Draw Dynamic Obstacles
-            for (auto [oid, obs] : obstacles_) obs->draw();
-            // Draw Robots
-            for (auto [rid, robot] : robots_) robot->draw();
-        EndMode3D();
-        draw_info(clock_);
+    ClearBackground(RAYWHITE);
+    BeginMode3D(graphics->camera3d);
+    // Draw Ground
+    DrawModel(graphics->groundModel_, graphics->groundModelpos_, 1., WHITE);
+    // Draw Dynamic Obstacles
+    for (auto [oid, obs] : obstacles_)
+        obs->draw();
+    // Draw Robots
+    for (auto [rid, robot] : robots_)
+        robot->draw();
+    EndMode3D();
+    draw_info(clock_);
     EndDrawing();
 };
 
@@ -89,9 +97,6 @@ void Simulator::timestep()
     if (!(globals.SIM_MODE == Timestep || globals.SIM_MODE == Iterate))
         return;
 
-    auto t0 = Clock::now();
-    
-    auto tp1s = Clock::now();
     // Create and/or destory factors depending on a robot's neighbours
     calculateRobotNeighbours(robots_);
     for (auto [r_id, robot] : robots_)
@@ -99,35 +104,18 @@ void Simulator::timestep()
         robot->updateInterrobotFactors();
         robot->updateDynamicObstacleFactors();
     }
-    auto tp1e = Clock::now();
-    Duration tp1d = tp1e - tp1s;
-    // print("TP 1", tp1d.count());
 
     // If the communications failure rate is non-zero, activate/deactivate robot comms
     setCommsFailure(globals.COMMS_FAILURE_RATE);
 
-    auto tp2s = Clock::now();
     // Perform iterations of GBP. Ideally the internal and external iterations
     // should be interleaved better. Here it is assumed there are an equal number.
     for (int i = 0; i < globals.NUM_ITERS; i++)
     {
-        auto intern_start = Clock::now();
         iterateGBP(1, INTERNAL, robots_);
-        auto intern_end = Clock::now();
-        Duration intern_d = intern_end - intern_start;
-        // print("Internal: ", intern_d.count());
-        
-        auto extern_start = Clock::now();
         iterateGBP(1, EXTERNAL, robots_);
-        auto extern_end = Clock::now();
-        Duration extern_d = extern_end - extern_start;
-        // print("External: ", extern_d.count());
     }
-    auto tp2e = Clock::now();
-    Duration tp2d = tp2e - tp2s;
-    // print("TP 2", tp2d.count());
 
-    auto tp3s = Clock::now();
     // Update (move) obstacles by one timestep
     for (auto [oid, obs] : obstacles_)
     {
@@ -140,10 +128,6 @@ void Simulator::timestep()
         robot->updateCurrent();
         robot->updateHorizon();
     }
-    auto tp3e = Clock::now();
-    Duration tp3d = tp3e - tp3s;
-    // print("TP 3", tp3d.count());
-
     // Increase simulation clock by one timestep
     clock_++;
     if (clock_ >= globals.MAX_TIME)
@@ -155,14 +139,8 @@ void Simulator::timestep()
     if (globals.SIM_MODE == Iterate && clock_ % globals.ITERATE_STEPS == 0)
     {
         globals.SIM_MODE = SimNone;
-        for (auto [r_id, robot] : robots_) robot->print_graph_info();
+        // for (auto [r_id, robot] : robots_) robot->print_graph_info();
     }
-
-    auto t1 = Clock::now();
-    Duration sim_time = t1 - t0;
-    // print("Timestep", sim_time.count(), "\n");
-
-
 };
 
 /*******************************************************************************/
@@ -297,25 +275,54 @@ void Simulator::createOrDeleteRobots()
     std::vector<std::shared_ptr<Robot>> robots_to_create{};
     std::vector<std::shared_ptr<Robot>> robots_to_delete{};
     Eigen::VectorXd starting, turning, ending; // Waypoints : [x,y,xdot,ydot].
-    double bound = double(globals.WORLD_SZ / 2 - 1);
+    double bound = double(globals.WORLD_SZ / 2);
 
     if (globals.FORMATION == "playground")
     {
-        new_robots_needed_ = false;
-        Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5), wp5(5);
-        wp1 << -10., -10.,  1.,  0., 30.;
-        wp2 <<  10., -10.,  1.,  0., 5.;
-        wp3 <<  10.,  10.,  0.,  1., 5.;
-        wp4 << -10.,  10., -1.,  0., 5.;
-        wp5 << -10,  -10.,  0., -1., 5.;
-        std::deque<Eigen::VectorXd> waypoints{wp1, wp2, wp3, wp4, wp5};
+        new_robots_needed_ = globals.NEW_ROBOTS_NEEDED;
+        std::deque<Eigen::VectorXd> wps1{
+            Eigen::VectorXd{{-20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}},
+            Eigen::VectorXd{{20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}}};
+        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
 
-        Color robot_color = ColorFromHSV(5. * 36., 1., 0.75);
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, globals.ROBOT_RADIUS, robot_color));
+        std::deque<Eigen::VectorXd> wps2{
+            Eigen::VectorXd{{20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}},
+            Eigen::VectorXd{{-20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}}};
+        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
     }
 
+    else if (globals.FORMATION == "layered_walls")
+    {
+        // Robots in a scenario with a layers of moving walls
+        new_robots_needed_ = true;
+        if (clock_ % 200 == 0)
+        {
+            int n_roads = globals.NUM_ROBOTS;
+            double lane_width = globals.WORLD_SZ / (n_roads + 1);
+            double lane_offset_x;
+            for (int i = 1; i < n_roads + 1; ++i)
+            {
+                lane_offset_x = -globals.WORLD_SZ / 2. + i * lane_width;
+                starting = Eigen::VectorXd{{lane_offset_x, -globals.WORLD_SZ / 2., 0., 1. * globals.MAX_SPEED, 0.}};
+                ending = Eigen::VectorXd{{lane_offset_x, globals.WORLD_SZ / 2., 0., 1. * globals.MAX_SPEED, 0.}};
+                std::deque<Eigen::VectorXd> waypoints{starting, ending};
+                float robot_radius = globals.ROBOT_RADIUS;
+                Color robot_color = DARKGREEN;
+                robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, robot_radius, robot_color));
+            }
+        }
 
-    else if (globals.FORMATION == "circle" || globals.FORMATION == "circle_cluttered_dynamic")
+        // Delete robots if out of bounds
+        for (auto [rid, robot] : robots_)
+        {
+            if (abs(robot->position_(0)) >= globals.WORLD_SZ / 2 || abs(robot->position_(1)) >= globals.WORLD_SZ / 2)
+            {
+                robots_to_delete.push_back(robot);
+            }
+        }
+    }
+
+    else if (globals.FORMATION == "circle")
     {
         // Robots must travel to opposite sides of circle
         new_robots_needed_ = false;
@@ -336,198 +343,46 @@ void Simulator::createOrDeleteRobots()
             // Define robot radius and colour here.
             float robot_radius = globals.ROBOT_RADIUS;
             Color robot_color = ColorFromHSV(i * 360. / (float)globals.NUM_ROBOTS, 1., 0.75);
-            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, robot_radius, robot_color));
+            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, robot_radius, robot_color));
         }
     }
 
-    else if (globals.FORMATION == "junction")
-    {
-        // Robots in a cross-roads style junction. There is only one-way traffic, and no turning.
-        new_robots_needed_ = true; // This is needed so that more robots can be created as the simulation progresses.
-        if (clock_ % 20 == 0)
-        { // Arbitrary condition on the simulation time to create new robots
-            int n_roads = 2;
-            int road = random_int(0, n_roads - 1);
-            Eigen::Matrix4d rot;
-            rot.setZero();
-            rot.topLeftCorner(2, 2) << cos(PI / 2. * road), -sin(PI / 2. * road), sin(PI / 2. * road), cos(PI / 2. * road);
-            rot.bottomRightCorner(2, 2) << cos(PI / 2. * road), -sin(PI / 2. * road), sin(PI / 2. * road), cos(PI / 2. * road);
-
-            int n_lanes = 2;
-            int lane = random_int(0, n_lanes - 1);
-            double lane_width = 4. * globals.ROBOT_RADIUS;
-            double lane_v_offset = (0.5 * (1 - n_lanes) + lane) * lane_width;
-            starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., lane_v_offset, globals.MAX_SPEED, 0., 0.}};
-            ending = rot * Eigen::VectorXd{{(double)globals.WORLD_SZ, lane_v_offset, 0., 0., 0.}};
-            std::deque<Eigen::VectorXd> waypoints{starting, ending};
-            float robot_radius = globals.ROBOT_RADIUS;
-            Color robot_color = DARKGREEN;
-            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, robot_radius, robot_color));
-        }
-
-        // Delete robots if out of bounds
-        for (auto [rid, robot] : robots_)
-        {
-            if (abs(robot->position_(0)) > globals.WORLD_SZ / 2 || abs(robot->position_(1)) > globals.WORLD_SZ / 2)
-            {
-                robots_to_delete.push_back(robot);
-            }
-        }
-    }
-
-    else if (globals.FORMATION == "junction_twoway" || globals.FORMATION == "junction_twoway_dynamic")
+    else if (globals.FORMATION == "junction_twoway")
     {
         // Robots in a two-way junction, turning LEFT (RED), RIGHT (BLUE) or STRAIGHT (GREEN)
-        new_robots_needed_ = true; // This is needed so that more robots can be created as the simulation progresses.
+        new_robots_needed_ = globals.NEW_ROBOTS_NEEDED; // This is needed so that more robots can be created as the simulation progresses.
         if (clock_ % 20 == 0)
         { // Arbitrary condition on the simulation time to create new robots
             int n_roads = 4;
             int road = random_int(0, n_roads - 1);
-            // We will define one road (the one going from left to right) and then we can rotate the positions for other roads.
-            // Eigen::Matrix4d rot;
-            // rot.setZero();
-            // rot.topLeftCorner(2, 2) << cos(PI / 2. * road), -sin(PI / 2. * road), sin(PI / 2. * road), cos(PI / 2. * road);
-            // rot.bottomRightCorner(2, 2) << cos(PI / 2. * road), -sin(PI / 2. * road), sin(PI / 2. * road), cos(PI / 2. * road);
 
-            // 1) Start with identity so diag(4,4)==1 and everything else is 0
-            Eigen::Matrix<double,5,5> rot = Eigen::Matrix<double,5,5>::Identity();
+            Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
+            double angle = PI / 2. * road;
+            double c = std::cos(angle);
+            double s = std::sin(angle);
+            rot.block<2, 2>(0, 0) << c, -s, s, c;
+            rot.block<2, 2>(2, 2) << c, -s, s, c;
 
-            // 2) Compute your 2×2 rotation
-            double angle = PI/2. * road;
-            double c     = std::cos(angle);
-            double s     = std::sin(angle);
-
-            // 3) Plug it into the top‐left 2×2 (x,y) and the next 2×2 (speed,theta)
-            rot.block<2,2>(0,0) << c, -s, s,  c;
-            rot.block<2,2>(2,2) << c, -s, s,  c;
-
-            // rot5(4,4) is still 1, so wp(4) passes through unchanged
             int n_lanes = 2;
             int lane = random_int(0, n_lanes - 1);
             int turn = random_int(0, 2); // 0 = left, 1 = straight, 2 = right
+
             double lane_width = 4. * globals.ROBOT_RADIUS;
-            double lane_v_offset = (0.5 * (1 - 2. * n_lanes) + lane) * lane_width;
+            double lane_v_offset = (0.5 * (1 - 2. * n_lanes) + lane) * lane_width + 1.0;
             double lane_h_offset = (1 - turn) * (0.5 + lane - n_lanes) * lane_width;
+
             starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., lane_v_offset, globals.MAX_SPEED, 0., 0.}};
             turning = rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, (turn % 2) * globals.MAX_SPEED, (turn - 1) * globals.MAX_SPEED, 0.}};
             ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * globals.WORLD_SZ * 1., lane_v_offset + (turn - 1) * globals.WORLD_SZ * 1., 0., 0., 0.}};
-            std::deque<Eigen::VectorXd> waypoints;
-            
-            if (lane == 0 && random_float(0.f, 1.f) < 0.8f) {
-                waypoints.push_back(starting);
-                int stops_per_segment = 3;
-                double pause_time = 10.0;
-                for (int i = 1; i < stops_per_segment + 1; ++i) {
-                    Eigen::VectorXd wp = starting + (turning - starting) * i / (stops_per_segment+1);
-                    wp(4) = pause_time;
-                    waypoints.push_back(wp);
-                }
-                waypoints.push_back(turning);
-                for (int i = 1; i < stops_per_segment + 1; ++i){
-                    Eigen::VectorXd wp = turning + (ending - turning) * i / (stops_per_segment+1);
-                    wp(4) = pause_time;
-                    waypoints.push_back(wp);
-                }
-                waypoints.push_back(ending);
-            } else {
-                waypoints = {starting, turning, ending};
-            }
-
-            float robot_radius = globals.ROBOT_RADIUS;
+            std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
             Color robot_color = ColorFromHSV(turn * 120., 1., 0.75);
-            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, robot_radius, robot_color));
+            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, globals.ROBOT_RADIUS, robot_color));
         }
 
         // Delete robots if out of bounds
         for (auto [rid, robot] : robots_)
         {
             if (abs(robot->position_(0)) > globals.WORLD_SZ / 2 || abs(robot->position_(1)) > globals.WORLD_SZ / 2)
-            {
-                robots_to_delete.push_back(robot);
-            }
-        }
-    }
-
-    else if (globals.FORMATION == "moving_walls" || globals.FORMATION == "static_walls" || globals.FORMATION == "layered_walls")
-    {
-        // Robots in a scenario with a layers of moving walls
-        new_robots_needed_ = true;
-        if (clock_ % 200 == 0)
-        {
-            int n_roads = globals.NUM_ROBOTS;
-            double lane_width = globals.WORLD_SZ / (n_roads + 1);
-            double lane_offset_x;
-            for (int i = 1; i < n_roads + 1; ++i)
-            {
-                lane_offset_x = -globals.WORLD_SZ / 2. + i * lane_width;
-                starting = Eigen::VectorXd{{lane_offset_x, -globals.WORLD_SZ / 2., 0., 1. * globals.MAX_SPEED, 0.}};
-                ending = Eigen::VectorXd{{lane_offset_x, globals.WORLD_SZ / 2., 0., 1. * globals.MAX_SPEED, 0.}};
-                std::deque<Eigen::VectorXd> waypoints{starting, ending};
-                float robot_radius = globals.ROBOT_RADIUS;
-                Color robot_color = DARKGREEN;
-                robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, robot_radius, robot_color));
-            }
-        }
-
-        // Delete robots if out of bounds
-        for (auto [rid, robot] : robots_)
-        {
-            if (abs(robot->position_(0)) >= globals.WORLD_SZ / 2 || abs(robot->position_(1)) >= globals.WORLD_SZ / 2)
-            {
-                robots_to_delete.push_back(robot);
-            }
-        }
-    }
-
-    else if (globals.FORMATION == "magic_roundabout")
-    {
-        // Robots moving in a complex roundabout (modelled after magic roundabout in Swindon, UK)
-        new_robots_needed_ = true;
-        
-        static double speed = double(globals.MAX_SPEED);
-        static std::vector<Eigen::VectorXd> entries{
-            Eigen::VectorXd{{ bound,  10.5,  -speed,        -0.15 * speed, 0.}},
-            Eigen::VectorXd{{ bound,  7.5,   -speed,        -0.15 * speed, 0.}},
-            Eigen::VectorXd{{ 30.,   -bound, -0.78 * speed,  speed, 0.}},
-            Eigen::VectorXd{{-6.5,   -bound,  0.3  * speed,  speed, 0.}},
-            Eigen::VectorXd{{-bound, -34.,    0.8  * speed,  speed, 0.}},
-            Eigen::VectorXd{{-bound,  21.,    speed,        -0.15 * speed, 0.}},
-            Eigen::VectorXd{{ 3.,     bound, -0.13 * speed, -speed, 0.}},
-        };
-
-        static std::vector<Eigen::VectorXd> exits{
-            Eigen::VectorXd{{ bound,  3.0,    speed,         0.15 * speed, 0.}},
-            Eigen::VectorXd{{ bound,  1.0,    speed,         0.15 * speed, 0.}},
-            Eigen::VectorXd{{ 30.  , -bound,  0.78 * speed, -speed, 0.}},
-            Eigen::VectorXd{{-6.5,   -bound, -0.3  * speed, -speed, 0.}},
-            Eigen::VectorXd{{-bound, -29.,   -0.8  * speed, -speed, 0.}},
-            Eigen::VectorXd{{-bound,  25.,   -speed,         0.15 * speed, 0.}},
-            Eigen::VectorXd{{ 6.,     bound,  0.13 * speed,  speed, 0.}},
-        };
-
-        static std::map<int, Color>color_map {
-            {0, DARKGREEN}, {1, DARKGREEN}, {2, DARKBLUE}, {3, PURPLE}, {4, RED} ,
-            {5, GRAY}, {6, YELLOW}
-        };
-
-        if (clock_ % 500 == 0)
-        {
-            for (int i = 0; i < globals.NUM_ROBOTS; i++)
-            {
-                // starting = Eigen::VectorXd{{5., 0., 0., 0. }};
-                int entry = random_int(0, entries.size()-1);
-                int exit = random_int(0, exits.size()-1);
-                while ((exit == 2 || exit == 3) && exit == entry)
-                    exit = random_int(0, exits.size()-1);
-                robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, 
-                    std::deque<Eigen::VectorXd>{entries[entry], exits[exit]}, globals.ROBOT_RADIUS, color_map[exit]));
-            }
-        }
-
-        // Delete robots if out of bounds
-        for (auto [rid, robot] : robots_)
-        {
-            if (abs(robot->position_(0)) >= globals.WORLD_SZ / 2 || abs(robot->position_(1)) >= globals.WORLD_SZ / 2)
             {
                 robots_to_delete.push_back(robot);
             }
@@ -567,72 +422,16 @@ void Simulator::createOrDeleteObstacles()
     if (globals.FORMATION == "playground")
     {
         new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
-    
-        static std::shared_ptr<IGeometry> geom = graphics->GenCubeGeom(5.f, 5.f, 5.f);
         std::deque<Eigen::VectorXd> wps;
         Eigen::VectorXd wp1(5), wp2(5), wp3(5);
-        wp1 << -10., -20., 0., -1., 0.;   // Normal waypoint (pause time = 0)
-        wp2 << -10.,  20., 0., -1., 0.;     // Pause waypoint (pause for 20 seconds)
-        // wp3 << 0., 50., 0., -2., 0.;    // Normal waypoint (pause time = 0)
-        wps = {wp1, wp2};
-        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, geom, 2.5f);
+        wp1 << -10., 0., 1., 0., 0.;
+        wp2 << 0., 0., 1., 0., 10.;
+        wp3 << 0., -10., 0., -1., 0.;
+        wps = {wp1, wp2, wp3};
+        auto model = graphics->obstacleModels_[ObstacleType::BUS];
+        // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
+        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model, 2.5f);
         obs_to_create.push_back(obs);
-    }
-    
-    else if (globals.FORMATION == "moving_walls")
-    {
-        new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
-        // Create the obstacle geometry once and reuse it.
-        // makeObsModel generates a model and creates a KD-tree in local frame.
-        float w = 5.f;
-        float h = 5.f;
-        float d = 5.f;
-        float ele = h / 2.;
-        static std::shared_ptr<IGeometry> wall_obs_geom = graphics->GenCubeGeom(w, h, d);
-        static uint32_t last_spawn_time = -1000;
-        int spawn_interval = 600;
-
-        if (clock_ - last_spawn_time > spawn_interval)
-        {
-            static float wall_vel_x = 1.f;
-            Eigen::VectorXd wp1(5), wp2(5);
-            wp1 << -globals.WORLD_SZ / 2.f, 0.f, wall_vel_x, 0.f, 0.f;
-            wp2 << globals.WORLD_SZ / 2.f, 0.f, wall_vel_x, 0.f, 0.f;
-            std::deque<Eigen::VectorXd> waypoints{wp1, wp2};
-            // We deal with a 2D problem: obstacles remains at the same level of elevation and is directly defined here.
-            auto wall_obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, wall_obs_geom, ele);
-            wall_obs->completed_ = false;
-            obs_to_create.push_back(wall_obs);
-            last_spawn_time = clock_;
-        }
-
-        for (auto [oid, obs] : obstacles_)
-        {
-            if (obs->completed_)
-                obs_to_delete.push_back(oid);
-        }
-    }
-
-    else if (globals.FORMATION == "static_walls")
-    {
-        new_obstacles_needed_ = false;
-        float w = 5.f;
-        float h = 5.f;
-        float d = 5.f;
-        float ele = h / 2.;
-        static std::shared_ptr<IGeometry> wall_obs_geom = graphics->GenCubeGeom(w, h, d);
-        int n_roads = 8;
-        double lane_width = globals.WORLD_SZ / (n_roads + 1);
-        double lane_offset_x;
-        for (int i = 1; i < n_roads + 1; ++i)
-        {
-            lane_offset_x = -globals.WORLD_SZ / 2. + i * lane_width;
-            Eigen::VectorXd wp(5);
-            wp << lane_offset_x, 0., 0., 0., 0.;
-            std::deque<Eigen::VectorXd> waypoints{wp};
-            auto wall_obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, wall_obs_geom, ele);
-            obs_to_create.push_back(wall_obs);
-        }
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -682,48 +481,46 @@ void Simulator::createOrDeleteObstacles()
         }
     }
 
-    else if (globals.FORMATION == "circle_cluttered_dynamic")
+    else if (globals.FORMATION == "circle")
     {
         new_obstacles_needed_ = false;
         static bool obs_initialised = false;
         static std::vector<MotionOptions> motion_options;
-        
+
         if (!obs_initialised)
         {
             // Depends on omega
             int size = 100;
             // Since Y increases downwards, omegas need to be negated for anti-clockwise motion
-            std::vector<float> radii = {13.1f, 9.2f, 6.7f, 6.3f};
-            std::vector<float> phase_offsets = {std::atan2(-10.f, 8.5f), std::atan2(7.f, -6.f), std::atan2(-6.5f, -1.5f), std::atan2(2.f, 6.f)};
-            std::vector<float> omegas = {-0.1f, -0.1f, -0.1f, -0.1f};
-            
+            std::vector<float> radii = {13.1f, 9.2f, 6.7f};
+            std::vector<float> phase_offsets = {-std::atan2(10.f, 8.5f), std::atan2(7.f, -6.f), -std::atan2(6.5f, -1.5f)};
+            std::vector<float> omegas = {-0.1f, -0.1f, -0.1f};
+
             // Cuboids1
-            Eigen::VectorXd mo1_wp(5), mo2_wp(5), mo3_wp(5), mo4_wp(5);
+            Eigen::VectorXd mo1_wp(5), mo2_wp(5), mo3_wp(5);
             mo1_wp << 8.5, -10., 0., 0., 0.;
             mo2_wp << -6.0, 7.0, 0., 0., 0.;
             mo3_wp << -1.5, -6.5, 0., 0., 0.;
-            mo4_wp << 6.0, 2.0, 0.0, 0.0, 0.;
-            
+
             auto mo1 = MotionOptions(3.f, 5.f, 6.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{mo1_wp});
             auto mo2 = MotionOptions(4.f, 4.f, 4.f, 2.0f, 0, graphics, std::deque<Eigen::VectorXd>{mo2_wp});
             auto mo3 = MotionOptions(3.f, 5.f, 3.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{mo3_wp});
-            // Triangles
-            Mesh t1 = graphics->genMeshPyramid(3.f, 3.f);
-            auto mo4 = MotionOptions(t1, 0, 0.0f, graphics, std::deque<Eigen::VectorXd>{mo4_wp});
-            
-            motion_options = {mo1, mo2, mo3, mo4};
 
-            for (int i = 0; i < motion_options.size(); ++i) {
+            motion_options = {mo1, mo2, mo3};
+
+            for (int i = 0; i < motion_options.size(); ++i)
+            {
                 std::deque<Eigen::VectorXd> waypoints;
-                float omega = (2.f * PI)/size;
-                for (int j = 0; j < size; ++j) {
+                float omega = (2.f * PI) / size;
+                for (int j = 0; j < size; ++j)
+                {
                     float theta = phase_offsets[i] + omega * j;
                     float x = radii[i] * std::cos(theta);
                     float y = radii[i] * std::sin(theta);
                     float vx = -radii[i] * omegas[i] * std::sin(theta);
                     float vy = radii[i] * omegas[i] * std::cos(theta);
                     Eigen::VectorXd wp(5);
-                    wp << x, y, vx, vy, 0.0;  // 5th dimension (pause time) = 0
+                    wp << x, y, vx, vy, 0.0; // 5th dimension (pause time) = 0
                     waypoints.emplace_back(wp);
                 }
                 motion_options[i].waypoints_ = waypoints;
@@ -739,44 +536,79 @@ void Simulator::createOrDeleteObstacles()
         }
     }
 
-    else if (globals.FORMATION == "junction_twoway_dynamic")
+    else if (globals.FORMATION == "junction_twoway")
     {
-        new_obstacles_needed_ = true;
-        static bool obs_initialised = false;
+        new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
 
-        std::vector<float> spawn_probs{0.5f, 0.5f};
-        static std::vector<std::shared_ptr<IGeometry>> geoms;
-        
-        if (!obs_initialised) {
-            // Pedestrian geometry
-            geoms.push_back(graphics->GenCubeGeom(1.f, 2.f, 1.f));
-            // Cyclist geometry
-            geoms.push_back(graphics->GenCubeGeom(1.f, 1.f, 2.f));
-            obs_initialised = true;
+        float now = clock_ * globals.TIMESTEP;
+        static bool initialised = false;
+
+        // Define PoissonSpawners for vehicle obstacles
+        static std::vector<PoissonSpawner> spawners = {
+            {60.0, 3.0, "r0"}, /* Road 0 */
+            {75.0, 30.0, "r1"}, /* Road 1 */
+            {50.0, 30.0, "r2"}, /* Road 2 */
+            {120.0, 30.0, "r3"} /* Road 3 */
+        };
+
+        // Set initial next_spawn, only needs to be called once
+        if (!initialised)
+        {
+            for (auto& spawner : spawners) spawner.schedule_from(now);
+            initialised = true;
         }
 
-        for (int i = 0; i < geoms.size(); ++i) {
-            if (random_float(0.f, 1.f) <= spawn_probs[i]) {
-                // Pedestrians
-                if (i == 0) {
-                    // Generate 1-3 pedestrians each time
-                    int n = random_int(1, 3);
-                    std::vector<std::deque<Eigen::VectorXd>> wps_vec = DynamicObstacle::GenPedWaypoints(n);
-                    for (int j = 0; j < n; ++j) {
-                        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps_vec[j], geoms[i], 1.f);
-                        obs->completed_ = false;
-                        obs_to_create.push_back(obs);
-                    }
-                }
+        // Define helper variables
+        int n_roads = 4, n_lanes = 2;
+        double lane_width = 4. * globals.ROBOT_RADIUS;
+        // Define helper lambdas
+        auto makeRotationMatrix5 = [](double road) {
+            double angle = PI / 2.0 * road;
+            double c = std::cos(angle);
+            double s = std::sin(angle);
     
-                // Cyclists
-                else if (i == 1) {
-    
-                }
+            Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
+            rot.block<2, 2>(0, 0) << c, -s, s,  c;
+            rot.block<2, 2>(2, 2) << c, -s, s,  c;
+            return rot;
+        };
+
+        auto lane_v_offset = [n_lanes, lane_width](int lane) {return (0.5 * (1 - 2. * n_lanes) + lane) * lane_width + 1.0;};
+        auto lane_h_offset = [n_lanes, lane_width](int turn, int lane) {return (1 - turn) * (0.5 + lane - n_lanes) * lane_width;};
+
+        for (int road = 0; road < spawners.size(); ++road) {
+            if (spawners[road].try_spawn(now)) {
+                // Random turn (0=left, 1=straight, 2=right) and lane
+                int turn = random_int(0, 2);
+                int lane = random_int(0, n_lanes - 1);
+
+                
+                // Get rotation matrix for this road
+                Eigen::Matrix<double, 5, 5> rot = makeRotationMatrix5(road);
+                
+                // Calculate offsets
+                double v_offset = lane_v_offset(lane);
+                double h_offset = lane_h_offset(turn, lane);
+                
+                // Define waypoints adjusted for DynamicObstacle's velocity interpolation behavior
+                Eigen::VectorXd starting(5), turning(5), ending(5);
+                starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
+                turning = rot * Eigen::VectorXd{{h_offset, v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
+                ending = rot * Eigen::VectorXd{{h_offset + (turn % 2) * globals.WORLD_SZ / 2., v_offset + (turn - 1) * globals.WORLD_SZ / 2., (turn % 2) * globals.MAX_SPEED * 1., (turn - 1) * globals.MAX_SPEED * 1., 0.}};
+                
+                // Create waypoints deque
+                std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
+
+                // Create the obstacle
+                auto model = graphics->obstacleModels_[ObstacleType::BUS];
+                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model, 2.5f);
+                obs_to_create.push_back(obs);
             }
         }
 
-        for (auto [oid, obs] : obstacles_) {
+        // Clean up completed obstacles
+        for (auto [oid, obs] : obstacles_)
+        {
             if (obs->completed_)
                 obs_to_delete.push_back(oid);
         }
@@ -786,7 +618,10 @@ void Simulator::createOrDeleteObstacles()
     for (auto obs : obs_to_create)
         obstacles_[obs->oid_] = obs;
     for (const int oid : obs_to_delete)
+    {
+        scheduler->removeQueue(oid);
         obstacles_.erase(oid);
+    }
 }
 
 /*******************************************************************************/
@@ -803,4 +638,3 @@ void Simulator::deleteRobot(std::shared_ptr<Robot> robot)
     robots_.erase(robot->rid_);
     robot_positions_.erase(robot->rid_);
 }
-

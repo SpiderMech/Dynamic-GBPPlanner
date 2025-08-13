@@ -9,23 +9,32 @@
   "DRAW_INTERROBOT": 0,
   "DRAW_PATH": 0,
   "DRAW_WAYPOINTS": 0,
+  "DRAW_FACTORS": 0,
   
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
   "MAX_TIME": 10000,
-  "NUM_ROBOTS": 80,
-  "T_HORIZON": 10,
+  "NUM_ROBOTS": 70,
+  "T_HORIZON": 5,
+  "MAX_HORIZON_DIST": 20,
   "ROBOT_RADIUS": 1,
   "COMMUNICATION_RADIUS": 20,
   "MAX_SPEED": 2,
   "COMMS_FAILURE_RATE": 0,
   "FORMATION": "circle",
-  "OBSTACLE_FILE": "../assets/imgs/circle_cluttered.png",
- 
+  "OBSTACLE_FILE": "",
+  
   "###": "GBP parameters",
-  "SIGMA_FACTOR_DYNAMICS": 0.1,
+  "SIGMA_FACTOR_DYNAMICS": 0.2,
   "SIGMA_FACTOR_INTERROBOT": 0.01,
   "SIGMA_FACTOR_OBSTACLE": 0.01,
-  "NUM_ITERS": 10
+  "NUM_ITERS": 10,
+  
+  "####": "Dynamic Obstacles parameters",
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.01,
+  "NEW_OBSTACLES_NEEDED": 1,
+  "ITERATE_STEPS": 1,
+  "RBF_GAMMA": 1.0,
+  "NUM_NEIGHBOURS": 5
 }

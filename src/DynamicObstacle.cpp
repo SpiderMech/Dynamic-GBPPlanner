@@ -2,10 +2,11 @@
 #include <DynamicObstacle.h>
 #include <nanoflann.h>
 #include <Utils.h>
+#include <Graphics.h>  // For ObstacleModelInfo
 
 DynamicObstacle::DynamicObstacle(int oid,
                                  std::deque<Eigen::VectorXd> waypoints,
-                                 std::shared_ptr<IGeometry> geom,
+                                 std::shared_ptr<ObstacleModelInfo> geom,
                                  float elevation)
     : oid_(oid), waypoints_(waypoints),
       geom_(std::move(geom)), elevation_(elevation)
@@ -15,8 +16,19 @@ DynamicObstacle::DynamicObstacle(int oid,
     if (start.size() >= 5 && start(4) > 0.0) {
         pause_timer_ += start(4);  // Use 5th dimension for pause time
     }
-    // If starting waypoint a pause timer, its velocity is still used as the initial velocity
-    state_ = states_[0] = Eigen::Vector4d{start(0), start(1), start(2), start(3)};
+    
+    // Initialize state with position, velocity, and orientation
+    state_.resize(5);
+    state_ << start(0), start(1), start(2), start(3), 0.0;  // Initial orientation is 0
+    
+    // Calculate initial orientation from velocity if moving
+    Eigen::Vector2d velocity(start(2), start(3));
+    if (velocity.norm() > 1e-6) {
+        orientation_ = -wrapAngle(std::atan2(start(3), start(2)));  // Store in Y-down convention
+        state_(4) = orientation_;
+    }
+    
+    states_[0] = state_;
     waypoints_.pop_front();
 
     auto wp_copy = waypoints_;
@@ -49,6 +61,7 @@ void DynamicObstacle::updateObstacleState()
     }
 
     state_ = states_[0] = getNextState(state_, globals.TIMESTEP, waypoints_, pause_timer_);
+    orientation_ = state_[4];
     auto wp_copy = waypoints_;
     auto pt_copy = pause_timer_;
     for (int i = 1; i < variable_timesteps_.size(); ++i)
@@ -61,14 +74,27 @@ void DynamicObstacle::updateObstacleState()
 /***************************************************************************************************/
 // Compute the current local to world transformation matrix, with additional (optional) offset by delta_t
 /***************************************************************************************************/
-std::pair<Eigen::Matrix3f, Eigen::Vector4d> DynamicObstacle::getLocalToWorldTransform(const float delta_t) const
+std::pair<Eigen::Matrix3f, Eigen::VectorXd> DynamicObstacle::getLocalToWorldTransform(const float delta_t) const
 {
-    // Eigen::Vector4d s = (delta_t == 0) ? state_ : getStateAfterT(delta_t);
     int ts = static_cast<int>(delta_t / globals.T0);
-    Eigen::Vector4d s = states_.at(ts);
+    Eigen::VectorXd s = states_.at(ts);
+    
+    // Create transformation matrix with rotation and translation
     Eigen::Matrix3f tf = Eigen::Matrix3f::Identity();
+    float cos_theta = std::cos(s(4) + geom_->orientation_offset);
+    float sin_theta = std::sin(s(4) + geom_->orientation_offset);
+    
+    // Set rotation part (2D rotation in X-Y plane)
+    // For Y-down coordinate system, positive rotation is clockwise
+    tf(0, 0) = cos_theta;
+    tf(0, 1) = sin_theta;   // Flipped for Y-down
+    tf(1, 0) = -sin_theta;  // Flipped for Y-down
+    tf(1, 1) = cos_theta;
+    
+    // Set translation part
     tf(0, 2) = s[0];  // X translation
-    tf(1, 2) = s[1];  // Z translation (what was previously Z in world coordinates)
+    tf(1, 2) = s[1];  // Y translation
+    
     return {tf, s};
 }
 
@@ -109,9 +135,9 @@ std::vector<std::pair<Eigen::Vector2d, double>> DynamicObstacle::getNearestPoint
 /***************************************************************************************************/
 // Compute the state vector of the obstalce delta_t seconds later
 /***************************************************************************************************/
-Eigen::Vector4d DynamicObstacle::getStateAfterT(const float delta_t) const
+Eigen::VectorXd DynamicObstacle::getStateAfterT(const float delta_t) const
 {
-    Eigen::Vector4d s = state_;
+    Eigen::VectorXd s = state_;
     auto wpts = waypoints_;
     float time_remaining = delta_t;
     const float dt = globals.TIMESTEP;
@@ -121,13 +147,19 @@ Eigen::Vector4d DynamicObstacle::getStateAfterT(const float delta_t) const
         float step = time_remaining < dt ? time_remaining : dt;
         Eigen::Vector2d current_vel = s.segment<2>(2);
         Eigen::Vector2d target_vel = wpts.front().segment<2>(2);
-        float alpha = dt / tau_;
+        float alpha = dt / acc_tau_;
         Eigen::Vector2d new_vel = current_vel + alpha * (target_vel - current_vel);
         Eigen::Vector2d dir = wpts.front()({0, 1}) - s({0, 1});
         float dist_to_wp = dir.norm();
         dir.normalize();
         s.segment<2>(0) += new_vel.norm() * dir * step;
         s.segment<2>(2) = new_vel;
+        
+        // Update orientation based on velocity
+        if (new_vel.norm() > 1e-6) {
+            s(4) = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));
+        }
+        
         if (dist_to_wp < thresh_)
             wpts.pop_front();
         time_remaining -= step;
@@ -138,9 +170,9 @@ Eigen::Vector4d DynamicObstacle::getStateAfterT(const float delta_t) const
 /***************************************************************************************************/
 // Compute the next state vector based on given waypoints and starting state
 /***************************************************************************************************/
-Eigen::Vector4d DynamicObstacle::getNextState(Eigen::Vector4d state, float delta_t, std::deque<Eigen::VectorXd> &waypoints, float& pause_timer)
+Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta_t, std::deque<Eigen::VectorXd>& waypoints, float& pause_timer)
 {
-    Eigen::Vector4d s = state;
+    Eigen::VectorXd s = state;
     float time_remaining = delta_t;
     const float dt = globals.TIMESTEP;
     while (time_remaining > 0.f && !waypoints.empty())
@@ -159,13 +191,26 @@ Eigen::Vector4d DynamicObstacle::getNextState(Eigen::Vector4d state, float delta
         Eigen::Vector2d current_vel = s.segment<2>(2);
         Eigen::Vector2d target_vel = next_wp_is_pause ? current_vel : 
                                                         waypoints.front().segment<2>(2);
-        float alpha = dt / tau_;
+        float alpha = acc_tau_;
+        if (target_vel.norm() <= current_vel.norm()) {
+            // use dec_tau if decelerating
+            alpha = dt / dec_tau_;
+        } else {
+            alpha = dt / acc_tau_;
+        }
         Eigen::Vector2d new_vel = current_vel + alpha * (target_vel - current_vel);
         Eigen::Vector2d dir = waypoints.front()({0, 1}) - s({0, 1});
         float dist_to_wp = dir.norm();
         dir.normalize();
         s.segment<2>(0) += new_vel.norm() * dir * step;
         s.segment<2>(2) = new_vel;
+        
+        // Update orientation based on velocity (only if moving)
+        if (new_vel.norm() > 1e-6) {
+            s(4) = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));
+        }
+        // If velocity is zero, keep current orientation (s(4) unchanged)
+        
         if (dist_to_wp < thresh_) {
             if (next_wp_is_pause) pause_timer += waypoints.front()(4);  // Use 5th dimension for pause time
             waypoints.pop_front();
@@ -181,8 +226,20 @@ Eigen::Vector4d DynamicObstacle::getNextState(Eigen::Vector4d state, float delta
 /***************************************************************************************************/
 void DynamicObstacle::draw()
 {
-    if (globals.DRAW_OBSTACLES)
-        DrawModel(*geom_->model_, Vector3{(float)state_[0], elevation_, (float)state_[1]}, 1.0, geom_->color_);
+    if (globals.DRAW_OBSTACLES) {
+        // Convert orientation from radians to degrees for Raylib
+        float rotation = wrapAngle(orientation_ + geom_->orientation_offset);
+        // Add the model's default offset (similar to robots)
+        float rotation_degrees = rotation * (180.0f / M_PI);
+        
+        // Use DrawModelEx to include rotation
+        DrawModelEx(geom_->model,
+                    Vector3{(float)state_[0], -geom_->boundingBox.min.y, (float)state_[1]},
+                    Vector3{0.0f, 1.0f, 0.0f},  // Rotate around Y axis
+                    rotation_degrees,           // Rotation angle in degrees
+                    Vector3{1.0f, 1.0f, 1.0f},  // Scale
+                    geom_->color);               // Color tint
+    }
 }
 
 /***************************************************************************************************/
@@ -190,7 +247,7 @@ void DynamicObstacle::draw()
 /***************************************************************************************************/
 std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n) {
     std::vector<std::deque<Eigen::VectorXd>> waypoints_vec;
-    if (globals.FORMATION == "junction_twoway_dynamic") {
+    if (globals.FORMATION == "junction_twoway") {
         int n_lanes = 2;
         double lane_width = 4. * globals.ROBOT_RADIUS;
         double road_half_width = n_lanes * lane_width;

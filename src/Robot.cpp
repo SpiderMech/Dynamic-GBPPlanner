@@ -4,54 +4,129 @@
 /**************************************************************************************/
 #include <memory>
 #include <algorithm>
+#include <cmath>
 
 #include <Robot.h>
 #include <DynamicObstacle.h>
+#include <Utils.h>
 
 /***************************************************************************/
 // Creates a robot. Inputs required are :
 //      - Pointer to the simulator
 //      - A robot id rid (should be taken from simulator->next_rid_++),
-//      - A dequeue of waypoints (which are 4 dimensional [x,y,xdot,ydot])
+//      - A dequeue of waypoints (5 dimensional - [x, y, xdot, ydot, task_timer]). The last dimension specifies a pause duration at the waypoint.
+//      - Scale, for non-spherical robot models
 //      - Robot radius
 //      - Colour
+//      - Type, for id-ing the correct model type (see RobotType in Utils.h)
 /***************************************************************************/
-Robot::Robot(Simulator *sim,
-             int rid,
+Robot::Robot(Simulator *sim, int rid,
              std::deque<Eigen::VectorXd> waypoints,
-             float size,
-             Color color) : FactorGraph{rid},
-                            sim_(sim), rid_(rid),
-                            waypoints_(waypoints),
-                            robot_radius_(size), color_(color)
+             RobotType type, float scale, float radius, Color color) 
+    : FactorGraph{rid}, sim_(sim), rid_(rid), waypoints_(waypoints), 
+      robot_type_(type), scale_(scale), robot_radius_(radius), color_(color)
 {
+    dofs_ = globals.N_DOFS;
 
-    height_3D_ = robot_radius_; // Height out of plane for 3d visualisation only
+    // Check if variable DOF matches robot type, as spheres don't have orientation
+    if (robot_type_ == RobotType::SPHERE && dofs_ == 5) {
+        std::cerr << "warning: robot " << rid << "has SPHERE type but DOF is set to 5, it will be overridden to 4" << "\n";
+        dofs_ = 4;
+    }
 
-    // Initialise robot at
+    // Set height based on robot type - use bounding box center for proper ground placement
+    if (robot_type_ == RobotType::SPHERE) {
+        // For sphere, center is at radius height, and dimensions are symmetric
+        height_3D_ = robot_radius_;
+        robot_dimensions_ = Eigen::Vector2d(2.0 * robot_radius_, 2.0 * robot_radius_);
+    } else {
+        // For custom models, get the Y center of the bounding box
+        const auto& modelInfo = sim_->graphics->robotModels_[robot_type_];
+        height_3D_ = -modelInfo->boundingBox.min.y * scale_;
+        
+        // Set robot dimensions based on the model's bounding box
+        // Scale the dimensions to match the desired robot_radius
+        robot_dimensions_ = Eigen::Vector2d(modelInfo->dimensions.x * scale_, 
+                                            modelInfo->dimensions.z * scale_);
+        // Set default angle offset
+        default_angle_offset_ = modelInfo->orientation_offset;
+    }
+
+    // Check if waypoints are empty
     if (waypoints_.size() == 0)
     {
-        std::cerr << "warning: waypoints_ empty for robot " << rid << ". Initialising to default pose ([0, 0, 0, 0])" << "\n";
-        Eigen::VectorXd wp{{0., 0., 0., 0., 0.}};
+        std::cerr << "warning: waypoints_ empty for robot " << rid << ". Initialising to default (zero vector)" << "\n";
+        // +1 additional dimension for task_timer, 
+        // Orientation is never included in waypoints, as it is computed from velocity
+        Eigen::VectorXd wp = Eigen::VectorXd::Zero(5);
         waypoints_.push_back(wp);
     }
 
     // Robot will always set its horizon state to move towards the next waypoint.
     // Once this waypoint has been reached, it pops it from the waypoints
     auto &wp = waypoints_.front();
-    Eigen::VectorXd wp_no_timer{{wp(0), wp(1), wp(2), wp(3)}};
-    Eigen::VectorXd start = position_ = wp_no_timer;
-    if (wp.size() >= 5 && wp(4) > 0.0)
+    // Create start state (5D=[x, y, xdot, ydot, theta], 4D=[x, y, xdot, ydot, theta])
+    Eigen::VectorXd start(dofs_);
+
+    if (dofs_ == 5) {
+        // Extract position and velocity, calculate initial orientation
+        // Warning: world is Y-down, so negate theta to store in Y-down convention
+        double initial_theta = 0.0;  // Default to facing east
+        // Only compute orientation from velocity if robot is moving
+        if (std::abs(wp(2)) > 1e-6 || std::abs(wp(3)) > 1e-6) {
+            initial_theta = -wrapAngle(std::atan2(wp(3), wp(2)));
+        }
+        start << wp(0), wp(1), wp(2), wp(3), initial_theta; // Exclude the task timer from state
+    } else {
+        start << wp(0), wp(1), wp(2), wp(3);
+    }
+    position_ = start;
+    
+    // Check if starting waypoint is a task
+    if (wp.size() == 5 && wp(4) > 0.0)
     {
         task_active_ = true;
         task_timer_ = float(wp(4));
     }
     waypoints_.pop_front();
-    auto goal = (waypoints_.size() > 0) ? wp_no_timer : start;
+    
+    // Get the next waypoint as goal (if exists), otherwise use start
+    Eigen::VectorXd goal = start;
+    if (waypoints_.size() > 0) {
+        auto &next_wp = waypoints_.front();
+        goal = Eigen::VectorXd(dofs_);
+        if (dofs_ == 5) {
+            double goal_theta = start(4);
+            if (std::abs(next_wp(2)) > 1e-6 || std::abs(next_wp(3)) > 1e-6) {
+                goal_theta = -wrapAngle(std::atan2(next_wp(3), next_wp(2)));
+            }
+            goal << next_wp(0), next_wp(1), next_wp(2), next_wp(3), goal_theta;
+        } else {
+            goal << next_wp(0), next_wp(1), next_wp(2), next_wp(3);
+        }
+    }
 
-    // Initialise the horzion in the direction of the goal, at a distance T_HORIZON * MAX_SPEED from the start.
-    Eigen::VectorXd start2goal = goal - start;
-    Eigen::VectorXd horizon = start + std::min(start2goal.norm(), 1. * globals.T_HORIZON * globals.MAX_SPEED) * start2goal.normalized();
+    // Initialise the horizon in the direction of the goal, at a distance T_HORIZON * MAX_SPEED from the start.
+    Eigen::VectorXd horizon(dofs_);
+    if (dofs_ == 5) {
+        // For 5D state, handle position/velocity and orientation separately
+        Eigen::Vector4d start_pv = start.head<4>();
+        Eigen::Vector4d goal_pv = goal.head<4>();
+        Eigen::Vector4d start2goal_pv = goal_pv - start_pv;
+        Eigen::Vector4d horizon_pv = start_pv + std::min(start2goal_pv.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal_pv.normalized();
+        
+        // Calculate horizon orientation from velocity direction
+        double horizon_theta = goal(4);  // Default to goal orientation
+        if (horizon_pv.segment<2>(2).norm() > 1e-6) {
+            horizon_theta = -wrapAngle(std::atan2(horizon_pv(2), horizon_pv(3)));  // Negate Y for our coordinate system
+        }
+        
+        horizon << horizon_pv, horizon_theta;
+    } else {
+        // For 4D state (no orientation), use simplified logic
+        Eigen::VectorXd start2goal = goal - start;
+        horizon = start + std::min(start2goal.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal.normalized();
+    }
 
     // Variables representing the planned path are at timesteps which increase in spacing.
     // eg. (so that a span of 10 timesteps as a planning horizon can be represented by much fewer variables)
@@ -63,21 +138,39 @@ Robot::Robot(Simulator *sim,
     /***************************************************************************/
     Color var_color = color_;
     double sigma;
-    int n = globals.N_DOFS;
-    Eigen::VectorXd mu(n);
-    Eigen::VectorXd sigma_list(n);
+    Eigen::VectorXd mu(dofs_);
+    Eigen::VectorXd sigma_list(dofs_);
 
     for (int i = 0; i < num_variables_; i++)
     {
         // Set initial mu and covariance of variable interpolated between start and horizon
-        mu = start + (horizon - start) * (float)(variable_timesteps[i] / (float)variable_timesteps.back());
+        float interp_factor = (float)(variable_timesteps[i] / (float)variable_timesteps.back());
+        
+        if (dofs_ == 5) {
+            // For 5D state, interpolate position/velocity separately from orientation
+            Eigen::Vector4d start_pv = start.head<4>();  // position and velocity
+            Eigen::Vector4d horizon_pv = horizon.head<4>();  // position and velocity
+            Eigen::Vector4d interp_pv = start_pv + (horizon_pv - start_pv) * interp_factor;
+            
+            // Calculate orientation from interpolated velocity
+            double interp_theta = start(4);  // Default to start orientation
+            if (interp_pv.tail<2>().norm() > 1e-6) {  // If there's velocity
+                interp_theta = -wrapAngle(std::atan2(interp_pv(3), interp_pv(2)));
+            }
+            
+            mu << interp_pv, interp_theta;
+        } else {
+            // For 4D state, simple linear interpolation works
+            mu = start + (horizon - start) * interp_factor;
+        }
+        // print(variable_timesteps[i], mu.transpose());
         // Start and Horizon state variables should be 'fixed' during optimisation at a timestep
         sigma = (i == 0 || i == num_variables_ - 1) ? globals.SIGMA_POSE_FIXED : 0.;
         // sigma = (i == 0) ? globals.SIGMA_POSE_FIXED : (i == num_variables_ - 1) ? 1e-2 :  0. ;
         sigma_list.setConstant(sigma);
 
         // Create variable and add to robot's factor graph
-        auto variable = std::make_shared<Variable>(sim->next_vid_++, rid_, mu, sigma_list, robot_radius_, n, variable_timesteps[i]);
+        auto variable = std::make_shared<Variable>(sim->next_vid_++, rid_, mu, sigma_list, robot_radius_, dofs_, variable_timesteps[i]);
         variables_[variable->key_] = variable;
     }
 
@@ -89,7 +182,7 @@ Robot::Robot(Simulator *sim,
         // T0 is the timestep between the current state and the first planned state.
         float delta_t = globals.T0 * (variable_timesteps[i + 1] - variable_timesteps[i]);
         std::vector<std::shared_ptr<Variable>> variables{getVar(i), getVar(i + 1)};
-        auto factor = std::make_shared<DynamicsFactor>(sim->next_fid_++, rid_, variables, globals.SIGMA_FACTOR_DYNAMICS, Eigen::VectorXd::Zero(globals.N_DOFS), delta_t);
+        auto factor = std::make_shared<DynamicsFactor>(sim->next_fid_++, rid_, variables, dofs_, globals.SIGMA_FACTOR_DYNAMICS, Eigen::VectorXd::Zero(dofs_), delta_t);
 
         // Add this factor to the variable's list of adjacent factors, as well as to the robot's list of factors
         for (auto var : factor->variables_)
@@ -125,27 +218,47 @@ Robot::~Robot()
 void Robot::updateCurrent()
 {
     auto curr_var = getVar(0);
-
+    
     if (task_timer_ > 0.f)
     {
         task_timer_ = std::max(0.f, task_timer_ - globals.TIMESTEP);
-        if (task_timer_ == 0.f)
-        {
-            task_active_ = false;
-        }
-        else
-        {
-            return;
-        }
+        if (task_timer_ == 0.f) { task_active_ = false; }
+        else { return; }
     }
-
+   
     // Move plan: move plan current state by plan increment
     Eigen::VectorXd increment = ((*this)[1]->mu_ - (*this)[0]->mu_) * globals.TIMESTEP / globals.T0;
-    // In GBP we do this by modifying the prior on the variable
-    // If there is a task active, we don't want to overwrite the strong prior at the task waypoint
-    curr_var->change_variable_prior(curr_var->mu_ + increment);
-    // Real pose update
-    position_ = position_ + increment;
+    
+    // Handle orientation separately for 5D state
+    if (dofs_ == 5) {
+        // Calculate new position and velocity from increment
+        Eigen::Vector4d pos_vel_increment = increment.head<4>();
+        Eigen::Vector4d new_pos_vel = position_.head<4>() + pos_vel_increment;
+        
+        // Calculate new orientation based on velocity direction
+        double new_theta = position_(4);  // Keep current orientation by default
+        Eigen::Vector2d velocity = new_pos_vel.tail<2>();
+        if (velocity.norm() > 1e-6) {
+            new_theta = -wrapAngle(std::atan2(velocity(1), velocity(0)));  // Negate Y for our coordinate system
+        }
+        
+        // Update position with proper orientation
+        position_.head<4>() = new_pos_vel;
+        position_(4) = new_theta;
+        
+        // Update the variable prior similarly
+        Eigen::VectorXd new_mu = curr_var->mu_;
+        new_mu.head<4>() += increment.head<4>();
+        new_mu(4) = new_theta;
+        curr_var->change_variable_prior(new_mu);
+        
+        // Extract orientation for visualization
+        orientation_ = new_theta;
+    } else {
+        // For 4D state, simple increment works
+        curr_var->change_variable_prior(curr_var->mu_ + increment);
+        position_ = position_ + increment;
+    }
 
     // Perform distance check to initiate the task countdown timer
     if (task_active_ && waypoints_.size() > 0) {
@@ -183,12 +296,22 @@ void Robot::updateHorizon()
         // Horizon state moves towards the next waypoint.
         // The Horizon state's velocity is capped at MAX_SPEED
         Eigen::VectorXd dist_horz_to_goal = wp({0, 1}) - horizon->mu_({0, 1});
+        // This always moves robot with a new speed
         Eigen::VectorXd new_vel = dist_horz_to_goal.normalized() * std::min((double)globals.MAX_SPEED, dist_horz_to_goal.norm());
         Eigen::VectorXd new_pos = horizon->mu_({0, 1}) + new_vel * globals.TIMESTEP;
 
-        // Update horizon state with new pos and vel
-        Eigen::VectorXd new_mu(4);
-        new_mu << new_pos, new_vel;
+        Eigen::VectorXd new_mu(dofs_);
+        if (dofs_ == 5) {
+            // Update horizon state with new pos, vel, and orientation
+            double new_theta = horizon->mu_(4);  // Keep current orientation by default
+            // Only update orientation if there's significant velocity
+            if (new_vel.norm() > 1e-6) {
+                new_theta = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));  // Negate Y for proper orientation
+            }
+            new_mu << new_pos, new_vel, new_theta;
+        } else {
+            new_mu << new_pos, new_vel;
+        }
         horizon->change_variable_prior(new_mu);
 
         // If the horizon has reached the waypoint, handle task or normal waypoint
@@ -198,8 +321,13 @@ void Robot::updateHorizon()
             {
                 task_active_ = true;
                 // Snap horizon state to task waypoint
-                Eigen::VectorXd new_mu(4);
-                new_mu << wp.head<2>(0), Eigen::VectorXd::Zero(2);
+                Eigen::VectorXd new_mu(dofs_);
+                if (dofs_ == 5) {
+                    double task_theta = horizon->mu_(4);  // Keep current orientation at task
+                    new_mu << wp.head<2>(), Eigen::VectorXd::Zero(2), task_theta;
+                } else {
+                    new_mu << wp.head<2>(), Eigen::VectorXd::Zero(2);
+                }
                 horizon->change_variable_prior(new_mu);
             }
             else
@@ -249,13 +377,18 @@ void Robot::createInterrobotFactors(std::shared_ptr<Robot> other_robot)
         // Get variables
         std::vector<std::shared_ptr<Variable>> variables{getVar(i), other_robot->getVar(i)};
 
-        // Create the inter-robot factor
+        // Create the inter-robot factor with robot dimensions for OBB collision
         Eigen::VectorXd z = Eigen::VectorXd::Zero(variables.front()->n_dofs_);
-        auto factor = std::make_shared<InterrobotFactor>(sim_->next_fid_++, this->rid_, variables, globals.SIGMA_FACTOR_INTERROBOT, z, 0.5 * (this->robot_radius_ + other_robot->robot_radius_));
+        auto factor = std::make_shared<InterrobotFactor>(sim_->next_fid_++, this->rid_, variables, dofs_,
+                                                         globals.SIGMA_FACTOR_INTERROBOT, z, 
+                                                         0.5 * (this->robot_radius_ + other_robot->robot_radius_),
+                                                         this->robot_dimensions_,
+                                                         other_robot->robot_dimensions_,
+                                                         this->default_angle_offset_,
+                                                         other_robot->default_angle_offset_);
         factor->other_rid_ = other_robot->rid_;
         // Add factor the the variable's list of factors, as well as to the robot's list of factors
-        for (auto var : factor->variables_)
-            var->add_factor(factor);
+        for (auto var : factor->variables_) var->add_factor(factor);
         this->factors_[factor->key_] = factor;
     }
 
@@ -352,7 +485,7 @@ void Robot::createDynamicObstacleFactors(std::shared_ptr<DynamicObstacle> obs)
     for (int i = 1; i < num_variables_ - 1; ++i)
     {
         std::vector<std::shared_ptr<Variable>> variables{getVar(i)};
-        auto do_fac = std::make_shared<DynamicObstacleFactor>(sim_->next_fid_++, rid_, variables, globals.SIGMA_FACTOR_DYNAMIC_OBSTACLE,
+        auto do_fac = std::make_shared<DynamicObstacleFactor>(sim_->next_fid_++, rid_, variables, dofs_, globals.SIGMA_FACTOR_DYNAMIC_OBSTACLE,
                                                               Eigen::VectorXd::Zero(1), robot_radius_, obs);
         for (auto var : do_fac->variables_)
             var->add_factor(do_fac);
@@ -419,15 +552,31 @@ double Robot::getDistToObs(std::shared_ptr<DynamicObstacle> obs)
 void Robot::draw()
 {
     Color col = (interrobot_comms_active_) ? color_ : GRAY;
+    const auto& model_info = sim_->graphics->robotModels_[robot_type_];
     // Draw planned path
     if (globals.DRAW_PATH)
     {
         static int debug = 0;
         for (auto [vid, variable] : variables_)
         {
-            if (!variable->valid_)
-                continue;
-            DrawSphere(Vector3{(float)variable->mu_(0), height_3D_, (float)variable->mu_(1)}, 0.5 * robot_radius_, ColorAlpha(col, 0.5));
+            const auto& mu = variable->mu_;
+            if (!variable->valid_) continue;
+            if (robot_type_ == RobotType::SPHERE) {
+                DrawModel(sim_->graphics->robotModels_[robot_type_]->model,
+                         Vector3{(float)mu(0), height_3D_, (float)mu(1)},
+                         0.5 * robot_radius_, ColorAlpha(col, 0.5));
+ 
+            } else if (robot_type_ == RobotType::CAR) {
+                float rotation_degrees = (mu(4) + model_info->orientation_offset) * (180.0f / M_PI);
+                float adjusted_rotation = std::remainder(rotation_degrees, 360.f);
+                float scale = 0.5 * scale_;
+                DrawModelEx(model_info->model,
+                            Vector3{(float)mu(0), height_3D_, (float)mu(1)},
+                            Vector3{0.0f, 1.0f, 0.0f},    // Rotate around Y axis
+                            adjusted_rotation,            // Rotation angle in degrees with offset
+                            Vector3{scale, scale, scale}, // Uniform scale
+                            ColorAlpha(col, 0.5));        // Color tint
+            }
         }
         for (auto [fid, factor] : factors_)
         {
@@ -467,6 +616,24 @@ void Robot::draw()
         for (auto [fid, factor] : factors_)
             factor->draw();
     }
-    // Draw the actual position of the robot. This uses the robotModel defined in Graphics.cpp, others can be used.
-    DrawModel(sim_->graphics->robotModel_, Vector3{(float)position_(0), height_3D_, (float)position_(1)}, robot_radius_, col);
+    // Draw the robot model based on its type
+    if (robot_type_ == RobotType::SPHERE) {
+        // For sphere type, just draw a sphere (original implementation)
+        DrawModel(sim_->graphics->robotModels_[robot_type_]->model,
+                  Vector3{(float)position_(0), height_3D_, (float)position_(1)},
+                  robot_radius_, col);
+    } else {
+        // For car/bus models, apply rotation and proper scaling
+        // Convert orientation from radians to degrees for Raylib
+        float rotation_degrees = (orientation_ + model_info->orientation_offset) * (180.0f / M_PI);
+        float adjusted_rotation = std::remainder(rotation_degrees, 360.f);
+        
+        // DrawModelEx allows us to specify position, rotation axis, rotation angle, scale, and tint
+        DrawModelEx(model_info->model,
+                    Vector3{(float)position_(0), height_3D_, (float)position_(1)},
+                    Vector3{0.0f, 1.0f, 0.0f},       // Rotate around Y axis
+                    adjusted_rotation,               // Rotation angle in degrees with offset
+                    Vector3{scale_, scale_, scale_}, // Uniform scale
+                    col);                            // Color tint
+    }
 };

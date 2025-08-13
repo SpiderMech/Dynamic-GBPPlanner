@@ -1,32 +1,41 @@
 {
   "_comment0": "Basic parameters",
   "ASSETS_DIR": "../assets/",
+  "N_DOFS": 4,
   
   "#": "Display parameters",
   "DISPLAY": 1,
   "WORLD_SZ": 100,
-  "SCREEN_SZ": 1000,
+  "SCREEN_SZ": 800,
   "DRAW_INTERROBOT": 0,
   "DRAW_PATH": 0,
   "DRAW_WAYPOINTS": 0,
+  "DRAW_FACTORS": 0,
   
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
   "MAX_TIME": 10000,
+  "NEW_OBSTACLES_NEEDED": 1,
+  "NEW_ROBOTS_NEEDED": 1,
   "NUM_ROBOTS": 1,
-  "T_HORIZON": 5,
+  "T_HORIZON": 3,
+  "MAX_HORIZON_DIST": 20,
   "ROBOT_RADIUS": 1,
-  "COMMUNICATION_RADIUS": 20,
+  "COMMUNICATION_RADIUS": 10,
   "MAX_SPEED": 2,
   "COMMS_FAILURE_RATE": 0,
   "FORMATION": "junction_twoway",
-  "OBSTACLE_FILE": "../assets/imgs/junction_twoway.png",
+  "OBSTACLE_FILE": "../assets/imgs/junction_twoway/junction_twoway.png",
+  "ITERATE_STEPS": 1,
 
   "###": "GBP parameters",
   "SIGMA_FACTOR_DYNAMICS": 0.1,
   "SIGMA_FACTOR_INTERROBOT": 0.01,
   "SIGMA_FACTOR_OBSTACLE": 0.01,
-  "NUM_ITERS": 10
-
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.01,
+  "NUM_ITERS": 8,
+  "RBF_GAMMA": 0.8,
+  "NUM_NEIGHBOURS": 3,
+  "OBSTALCE_SENSOR_RADIUS": 3.0
 }
