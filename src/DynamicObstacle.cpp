@@ -6,10 +6,8 @@
 
 DynamicObstacle::DynamicObstacle(int oid,
                                  std::deque<Eigen::VectorXd> waypoints,
-                                 std::shared_ptr<ObstacleModelInfo> geom,
-                                 float elevation)
-    : oid_(oid), waypoints_(waypoints),
-      geom_(std::move(geom)), elevation_(elevation)
+                                 std::shared_ptr<ObstacleModelInfo> geom)
+    : oid_(oid), waypoints_(waypoints), geom_(std::move(geom))
 {
     auto start = waypoints_.front();
     // Check if this waypoint has a pause time (5th dimension > 0)

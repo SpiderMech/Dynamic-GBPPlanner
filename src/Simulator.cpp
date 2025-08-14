@@ -8,6 +8,7 @@
 #include <DynamicObstacle.h>
 #include <Graphics.h>
 #include <Robot.h>
+#include <GeometryUtils.h>
 #include "Metrics.hpp"
 #include <nanoflann.h>
 #include "cnpy/cnpy.h"
@@ -43,8 +44,9 @@ Simulator::Simulator()
     graphics = new Graphics(obstacleImg);
 
     // Initialise helper classes
-    scheduler = new TaskScheduler(); /* Schedules tasks for robots/ obstacles */
-    metrics = new MetricsCollector();
+    scheduler = new TaskScheduler();  // Schedules tasks for robots/ obstacles    
+    metrics = new MetricsCollector(); // Collects evaluation metrics
+
 };
 
 /*******************************************************************************/
@@ -62,6 +64,7 @@ Simulator::~Simulator()
         CloseWindow();
     }
     delete scheduler;
+    delete metrics;
 };
 
 /*******************************************************************************/
@@ -77,6 +80,23 @@ void Simulator::draw()
     BeginMode3D(graphics->camera3d);
     // Draw Ground
     DrawModel(graphics->groundModel_, graphics->groundModelpos_, 1., WHITE);
+    
+    // Draw spawn zones if in eval mode
+    if (globals.EVAL && !spawn_zones_.empty()) {
+        // Pale yellow color with transparency
+        Color spawn_zone_color = ColorAlpha(YELLOW, 0.3f);
+        float zone_height = 0.1f; // Slightly above ground to avoid z-fighting
+        
+        for (const auto& zone : spawn_zones_) {
+            // Get zone properties (all zones have angle = 0, so no rotation needed)
+            Vector3 position = {(float)zone.center.x(), zone_height, (float)zone.center.y()};
+            Vector3 size = {(float)(zone.halfExtents.x() * 2.0), 0.2f, (float)(zone.halfExtents.y() * 2.0)};
+            
+            // Simply draw the spawn zone as an axis-aligned box
+            DrawCube(position, size.x, size.y, size.z, spawn_zone_color);
+        }
+    }
+    
     // Draw Dynamic Obstacles
     for (auto [oid, obs] : obstacles_)
         obs->draw();
@@ -102,7 +122,7 @@ void Simulator::timestep()
     for (auto [r_id, robot] : robots_)
     {
         robot->updateInterrobotFactors();
-        robot->updateDynamicObstacleFactors();
+        if (globals.USE_DYNAMIC_OBS_FAC) robot->updateDynamicObstacleFactors();
     }
 
     // If the communications failure rate is non-zero, activate/deactivate robot comms
@@ -128,9 +148,19 @@ void Simulator::timestep()
         robot->updateCurrent();
         robot->updateHorizon();
     }
+
+    // Evlaution: Add robot tracks
+    if (globals.EVAL) {
+        for (const auto& [rid, robot] : robots_) {
+            metrics->addSample(rid, clock_ * globals.TIMESTEP, robot->position_.head<2>());
+        }
+        // Detect and log collisions
+        detectCollisions();
+    }
+
     // Increase simulation clock by one timestep
     clock_++;
-    if (clock_ >= globals.MAX_TIME)
+    if (clock_ * globals.TIMESTEP >= std::min(globals.MAX_TIME, globals.MAX_TIMESTEP * globals.TIMESTEP))
     {
         print("Maximum run time reached, exiting...");
         globals.RUN = false;
@@ -351,10 +381,93 @@ void Simulator::createOrDeleteRobots()
     {
         // Robots in a two-way junction, turning LEFT (RED), RIGHT (BLUE) or STRAIGHT (GREEN)
         new_robots_needed_ = globals.NEW_ROBOTS_NEEDED; // This is needed so that more robots can be created as the simulation progresses.
+        
+        // Define constants
+        const int n_roads = 4, n_lanes = 2;
+        const double lane_width = 4. * globals.ROBOT_RADIUS;
+
+        static bool spawn_zones_initialized = false;
+        if (!spawn_zones_initialized) {
+            
+            
+            spawn_zones_initialized = true;
+        }
+
+        // Predefine the four finish lines at junction exits
+        static std::vector<std::pair<Eigen::Vector2d, Eigen::Vector2d>> finish_lines;
+        static bool initialised = false;
+        if (!initialised) {
+            double junction_exit_dist = 50.0; // Distance from center where finish line is placed
+            double line_half_width = n_lanes * lane_width;
+            
+            // Reference: road 0 going from left to right. Must retain this order.
+            // turn = 0 (left), road 1
+            finish_lines.push_back({
+                Eigen::Vector2d(-line_half_width, -junction_exit_dist),
+                Eigen::Vector2d( line_half_width, -junction_exit_dist)
+            });
+            
+            // turn = 1 (straight), road 2
+            finish_lines.push_back({
+                Eigen::Vector2d(junction_exit_dist, -line_half_width),
+                Eigen::Vector2d(junction_exit_dist,  line_half_width)
+            });
+            
+            // turn = 2 (right), road 3
+            finish_lines.push_back({
+                Eigen::Vector2d(-line_half_width, junction_exit_dist),
+                Eigen::Vector2d( line_half_width, junction_exit_dist)
+            });
+
+            // Road 0: near start
+            finish_lines.push_back({
+                Eigen::Vector2d(-junction_exit_dist, -line_half_width),
+                Eigen::Vector2d(-junction_exit_dist,  line_half_width)
+            });
+
+            // Create spawn zones at each road entrance
+            const double zone_length = 15.0;  // Length of spawn zone along the road
+            const double zone_width = 2.0 * n_lanes * lane_width;  // Width to cover all lanes, on both roads
+            const double bound_offset = 10.0;   // Slight offset beyond world bounds
+            const double spawn_offset = globals.WORLD_SZ / 2.0 - zone_length / 2.0 + bound_offset;
+            
+            // Road 0: Left entrance (horizontal)
+            spawn_zones_.emplace_back(
+                Eigen::Vector2d(-spawn_offset, 0.0),
+                Eigen::Vector2d(zone_length * 0.5, zone_width * 0.5),
+                0.0
+            );
+            
+            // Road 1: Top entrance (vertical)  
+            spawn_zones_.emplace_back(
+                Eigen::Vector2d(0.0, -spawn_offset),
+                Eigen::Vector2d(zone_width * 0.5, zone_length * 0.5),
+                0.0
+            );
+            
+            // Road 2: Right entrance (horizontal)
+            spawn_zones_.emplace_back(
+                Eigen::Vector2d(spawn_offset, 0.0),
+                Eigen::Vector2d(zone_length * 0.5, zone_width * 0.5),
+                0.0
+            );
+            
+            // Road 3: Bottom entrance (vertical)
+            spawn_zones_.emplace_back(
+                Eigen::Vector2d(0.0, spawn_offset),
+                Eigen::Vector2d(zone_width * 0.5, zone_length * 0.5),
+                0.0
+            );
+
+            initialised = true;
+        }
+        
         if (clock_ % 20 == 0)
         { // Arbitrary condition on the simulation time to create new robots
-            int n_roads = 4;
+            
             int road = random_int(0, n_roads - 1);
+            int lane = random_int(0, n_lanes - 1);
+            int turn = random_int(0, 2); // 0 = left, 1 = straight, 2 = right
 
             Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
             double angle = PI / 2. * road;
@@ -362,12 +475,7 @@ void Simulator::createOrDeleteRobots()
             double s = std::sin(angle);
             rot.block<2, 2>(0, 0) << c, -s, s, c;
             rot.block<2, 2>(2, 2) << c, -s, s, c;
-
-            int n_lanes = 2;
-            int lane = random_int(0, n_lanes - 1);
-            int turn = random_int(0, 2); // 0 = left, 1 = straight, 2 = right
-
-            double lane_width = 4. * globals.ROBOT_RADIUS;
+           
             double lane_v_offset = (0.5 * (1 - 2. * n_lanes) + lane) * lane_width + 1.0;
             double lane_h_offset = (1 - turn) * (0.5 + lane - n_lanes) * lane_width;
 
@@ -375,8 +483,18 @@ void Simulator::createOrDeleteRobots()
             turning = rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, (turn % 2) * globals.MAX_SPEED, (turn - 1) * globals.MAX_SPEED, 0.}};
             ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * globals.WORLD_SZ * 1., lane_v_offset + (turn - 1) * globals.WORLD_SZ * 1., 0., 0., 0.}};
             std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
-            Color robot_color = ColorFromHSV(turn * 120., 1., 0.75);
-            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, globals.ROBOT_RADIUS, robot_color));
+            
+            Color robot_color = globals.EVAL ? BLUE : ColorFromHSV(turn * 120., 1., 0.75);
+            
+            auto robot = std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, globals.ROBOT_RADIUS, robot_color);
+            robots_to_create.push_back(robot);
+            
+            // Set up metrics for this robot
+            if (globals.EVAL) {
+                metrics->setBaselinePathLength(robot->rid_, robot->base_path_length_);
+                int finish_idx = (turn + road) % 4;
+                metrics->setFinishLine(robot->rid_, finish_lines[finish_idx].first, finish_lines[finish_idx].second);
+            }
         }
 
         // Delete robots if out of bounds
@@ -388,10 +506,9 @@ void Simulator::createOrDeleteRobots()
             }
         }
     }
-
+    
     else
     {
-        // print("Shouldn't reach here, formation not defined!");
         // Define new formations here!
     }
 
@@ -400,6 +517,11 @@ void Simulator::createOrDeleteRobots()
     {
         robot_positions_[robot->rid_] = std::vector<double>{robot->waypoints_[0](0), robot->waypoints_[0](1)};
         robots_[robot->rid_] = robot;
+        
+        // Add initial sample for metrics tracking
+        if (globals.EVAL) {
+            metrics->addSample(robot->rid_, clock_ * globals.TIMESTEP, robot->position_.head<2>());
+        }
     };
     for (auto robot : robots_to_delete)
     {
@@ -430,7 +552,7 @@ void Simulator::createOrDeleteObstacles()
         wps = {wp1, wp2, wp3};
         auto model = graphics->obstacleModels_[ObstacleType::BUS];
         // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
-        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model, 2.5f);
+        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
         obs_to_create.push_back(obs);
     }
 
@@ -467,7 +589,7 @@ void Simulator::createOrDeleteObstacles()
         {
             if (clock_ - mo.last_spawn_time_ > mo.spawn_interval_)
             {
-                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, mo.waypoints_, mo.geom_, mo.elevation_);
+                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, mo.waypoints_, mo.geom_);
                 obs->completed_ = false;
                 obs_to_create.push_back(obs);
                 mo.last_spawn_time_ = clock_;
@@ -530,7 +652,7 @@ void Simulator::createOrDeleteObstacles()
 
         for (auto &mo : motion_options)
         {
-            auto obs = std::make_shared<DynamicObstacle>(next_oid_++, mo.waypoints_, mo.geom_, mo.elevation_);
+            auto obs = std::make_shared<DynamicObstacle>(next_oid_++, mo.waypoints_, mo.geom_);
             obs_to_create.push_back(obs);
             mo.last_spawn_time_ = clock_;
         }
@@ -592,7 +714,7 @@ void Simulator::createOrDeleteObstacles()
                 
                 // Define waypoints adjusted for DynamicObstacle's velocity interpolation behavior
                 Eigen::VectorXd starting(5), turning(5), ending(5);
-                starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
+                starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2. - 10., v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
                 turning = rot * Eigen::VectorXd{{h_offset, v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
                 ending = rot * Eigen::VectorXd{{h_offset + (turn % 2) * globals.WORLD_SZ / 2., v_offset + (turn - 1) * globals.WORLD_SZ / 2., (turn % 2) * globals.MAX_SPEED * 1., (turn - 1) * globals.MAX_SPEED * 1., 0.}};
                 
@@ -601,7 +723,7 @@ void Simulator::createOrDeleteObstacles()
 
                 // Create the obstacle
                 auto model = graphics->obstacleModels_[ObstacleType::BUS];
-                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model, 2.5f);
+                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model);
                 obs_to_create.push_back(obs);
             }
         }
@@ -615,8 +737,10 @@ void Simulator::createOrDeleteObstacles()
     }
 
     // Create or delete obstacles.
-    for (auto obs : obs_to_create)
+    for (auto obs : obs_to_create) {
+        obs->spawn_time_ = clock_ * globals.TIMESTEP;  // Set spawn time when creating obstacle
         obstacles_[obs->oid_] = obs;
+    }
     for (const int oid : obs_to_delete)
     {
         scheduler->removeQueue(oid);
@@ -637,4 +761,240 @@ void Simulator::deleteRobot(std::shared_ptr<Robot> robot)
     }
     robots_.erase(robot->rid_);
     robot_positions_.erase(robot->rid_);
+}
+
+/*******************************************************************************/
+// Detect and log collisions between robots and obstacles
+/*******************************************************************************/
+void Simulator::detectCollisions()
+{
+    // Helper function to create a unique key for a pair of IDs
+    static auto pairKey = [](int a, int b) -> uint64_t {
+        const uint32_t x = static_cast<uint32_t>(a < b ? a : b);
+        const uint32_t y = static_cast<uint32_t>(a < b ? b : a);
+        return (static_cast<uint64_t>(x) << 32) | y;
+    };
+    
+    // Static set to track seen collision pairs (persists across calls)
+    static std::unordered_set<uint64_t> seen_pairs_;
+    
+    // Helper lambda to check if collision should be ignored due to spawn zone
+    // id_j can be negative (indicating obstacle ID)
+    auto shouldIgnoreCollision = [&](int rid_i, int id_j, const Eigen::Vector2d& collision_pos) -> bool {
+        if (spawn_zones_.empty()) return false;
+        
+        double current_time = clock_ * globals.TIMESTEP;
+        
+        // Get age of first entity (always a robot)
+        auto track_i = metrics->getTrack(rid_i);
+        double age_i = current_time - track_i.t_start;
+        
+        // Get age of second entity
+        double age_j = spawn_zone_time_threshold_ + 1.0;  // Default: old enough
+        if (id_j > 0) {  // It's a robot
+            auto track_j = metrics->getTrack(id_j);
+            age_j = current_time - track_j.t_start;
+        } else if (id_j < 0) {  // It's an obstacle (negative ID)
+            int oid = -id_j;  // Convert back to positive obstacle ID
+            if (obstacles_.count(oid) > 0) {
+                age_j = current_time - obstacles_.at(oid)->spawn_time_;
+            }
+        }
+        
+        // Check if at least one entity is young enough to be in spawn grace period
+        if (age_i > spawn_zone_time_threshold_ && age_j > spawn_zone_time_threshold_) {
+            return false;  // Both are old enough, don't ignore collision
+        }
+        
+        // Check if collision position is in any spawn zone
+        for (const auto& zone : spawn_zones_) {
+            if (GeometryUtils::pointInOBB(collision_pos, zone)) {
+                return true;  // Collision is in spawn zone and at least one entity is young
+            }
+        }
+        
+        return false;
+    };
+    
+    // Initialization: determine if robots are spheres or OBBs
+    bool robots_are_spheres = true;
+    if (!robots_.empty()) {
+        // Check the first robot's type
+        robots_are_spheres = (robots_.begin()->second->robot_type_ == RobotType::SPHERE);
+    }
+    
+    // Small epsilon for numerical tolerance
+    const double eps = 1e-6;
+    const double dt = globals.TIMESTEP;
+    const double current_time = clock_ * dt;
+    
+    // Loop 1: Robot-Robot collisions
+    for (const auto& [rid_i, robot_i] : robots_) {
+        // Get robot i's position and velocity
+        Eigen::Vector2d pos_i = robot_i->position_.head<2>();
+        Eigen::Vector2d vel_i = robot_i->position_.segment<2>(2);
+        double radius_i = robot_i->robot_radius_;
+        
+        // Calculate search radius for potential collisions
+        double query_radius = radius_i + dt * vel_i.norm();
+        
+        // Use KD-tree to find nearby robots
+        std::vector<double> query_pt = {pos_i.x(), pos_i.y()};
+        const float search_radius_sq = std::pow(query_radius * 2.0, 2.0); // Extra margin for safety
+        std::vector<nanoflann::ResultItem<size_t, double>> matches;
+        nanoflann::SearchParameters params;
+        params.sorted = false;
+        
+        const size_t nMatches = treeOfRobots_->index->radiusSearch(
+            &query_pt[0], search_radius_sq, matches, params);
+        
+        for (size_t k = 0; k < nMatches; k++) {
+            // Get the matched robot's ID
+            auto it = robots_.begin();
+            std::advance(it, matches[k].first);
+            int rid_j = it->first;
+            
+            // Skip self
+            if (rid_j == rid_i) continue;
+            
+            // Skip if we've already checked this pair
+            uint64_t pair_id = pairKey(rid_i, rid_j);
+            if (seen_pairs_.count(pair_id) > 0) continue;
+            
+            auto robot_j = robots_.at(rid_j);
+            Eigen::Vector2d pos_j = robot_j->position_.head<2>();
+            Eigen::Vector2d vel_j = robot_j->position_.segment<2>(2);
+            double radius_j = robot_j->robot_radius_;
+            
+            bool collision = false;
+            
+            if (robots_are_spheres) {
+                // Simple sphere-sphere collision
+                double center_dist = (pos_j - pos_i).norm();
+                double combined_radius = radius_i + radius_j;
+                
+                // Check if certainly not colliding
+                if (center_dist > combined_radius + eps) {
+                    continue;  // No collision
+                }
+                collision = (center_dist <= combined_radius + eps);
+            } else {
+                // OBB-OBB collision for car-type robots
+                // Get orientations (stored in 5th component if DOF=5, otherwise compute from velocity)
+                double theta_i = 0.0;
+                double theta_j = 0.0;
+                
+                if (robot_i->dofs_ == 5) {
+                    theta_i = robot_i->position_(4);
+                } else if (vel_i.norm() > 1e-6) {
+                    theta_i = -wrapAngle(std::atan2(vel_i.y(), vel_i.x()));
+                }
+                theta_i += robot_i->default_angle_offset_;
+                
+                if (robot_j->dofs_ == 5) {
+                    theta_j = robot_j->position_(4);
+                } else if (vel_j.norm() > 1e-6) {
+                    Eigen::Vector2d vel_j = robot_j->position_.segment<2>(2);
+                    theta_j = -wrapAngle(std::atan2(vel_j.y(), vel_j.x()));
+                }
+                theta_j += robot_j->default_angle_offset_;
+                
+                // Create OBBs for both robots
+                OBB2D obb_i(pos_i, robot_i->robot_dimensions_ * 0.5, theta_i);
+                OBB2D obb_j(pos_j, robot_j->robot_dimensions_ * 0.5, theta_j);
+                
+                collision = GeometryUtils::overlapsOBB(obb_i, obb_j);
+            }
+            
+            if (collision) {
+                // Check if collision should be ignored due to spawn zone
+                Eigen::Vector2d collision_pos = (pos_i + pos_j) * 0.5;  // Midpoint of collision
+                if (!shouldIgnoreCollision(rid_i, rid_j, collision_pos)) {
+                    // Mark collision for both robots
+                    bool connected = std::find(robot_i->connected_r_ids_.begin(), robot_i->connected_r_ids_.end(), rid_j) != robot_i->connected_r_ids_.end();
+                    printf("CollisionEvent<Robot, Robot, %f>: ids=[%d, %d], pos1=[%f, %f], pos2=[%f, %f], comms_active=[%d, %d], connected=[%d]\n", 
+                        current_time, rid_i, rid_j, pos_i.x(), pos_i.y(), pos_j.x(), pos_j.y(), (int)robot_i->interrobot_comms_active_, (int)robot_j->interrobot_comms_active_,
+                        (int)connected
+                    );
+                    globals.LAST_SIM_MODE = Iterate;
+                    globals.SIM_MODE = SimNone;
+                    seen_pairs_.insert(pair_id);
+                    metrics->markCollision(rid_i, current_time);
+                    metrics->markCollision(rid_j, current_time);
+                }
+            }
+        }
+    }
+    
+    // Loop 2: Robot-Obstacle collisions
+    for (const auto& [oid, obstacle] : obstacles_) {
+        // Get obstacle's current state
+        Eigen::Vector2d obs_pos = obstacle->state_.head<2>();
+        double obs_theta = obstacle->orientation_;
+        
+        // Get obstacle dimensions from its geometry
+        if (!obstacle->geom_) continue;  // Skip if no geometry
+        
+        // Create OBB for the obstacle
+        // Obstacle dimensions are stored in the model info (x=width, z=depth for 2D)
+        float width = obstacle->geom_->dimensions.x;
+        float depth = obstacle->geom_->dimensions.z;
+        Eigen::Vector2d obs_half_extents(width * 0.5, depth * 0.5);
+        OBB2D obs_obb(obs_pos, obs_half_extents, obs_theta);
+        
+        // Calculate a bounding radius for initial culling
+        double obs_bounding_radius = obs_obb.getBoundingRadius();
+        
+        // Check each robot against this obstacle
+        for (const auto& [rid, robot] : robots_) {
+            Eigen::Vector2d robot_pos = robot->position_.head<2>();
+            double robot_radius = robot->robot_radius_;
+            
+            // Quick distance check for culling
+            double center_dist = (obs_pos - robot_pos).norm();
+            if (center_dist > obs_bounding_radius + robot_radius + eps) {
+                continue;  // Too far apart
+            }
+            
+            bool collision = false;
+            
+            if (robots_are_spheres) {
+                // Sphere-OBB collision
+                collision = GeometryUtils::overlapsSphereOBB(
+                    robot_pos, robot_radius, obs_obb, eps);
+            } else {
+                // OBB-OBB collision
+                double robot_theta = 0.0;
+                if (robot->dofs_ == 5) {
+                    robot_theta = robot->position_(4);
+                } else {
+                    Eigen::Vector2d vel = robot->position_.segment<2>(2);
+                    if (vel.norm() > 1e-6) {
+                        robot_theta = -wrapAngle(std::atan2(vel.y(), vel.x()));
+                    }
+                }
+                robot_theta += robot->default_angle_offset_;
+                
+                OBB2D robot_obb(robot_pos, robot->robot_dimensions_ * 0.5, robot_theta);
+                collision = GeometryUtils::overlapsOBB(robot_obb, obs_obb);
+            }
+            
+            if (collision) {
+                // Create unique key for robot-obstacle pair
+                // Use negative oid to distinguish from robot-robot pairs
+                uint64_t pair_id = pairKey(rid, -oid);
+                
+                if (seen_pairs_.count(pair_id) == 0) {
+                    // Check if collision should be ignored due to spawn zone
+                    if (!shouldIgnoreCollision(rid, -oid, robot_pos)) {
+                        printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f]\n", current_time, rid, oid, robot_pos.x(), robot_pos.y());
+                        globals.LAST_SIM_MODE = Iterate;
+                        globals.SIM_MODE = SimNone;
+                        seen_pairs_.insert(pair_id);
+                        metrics->markCollision(rid, current_time);
+                    }
+                }
+            }
+        }
+    }
 }

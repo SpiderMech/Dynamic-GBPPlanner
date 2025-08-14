@@ -21,31 +21,37 @@ struct OBB2D {
     // Get the four corners of the OBB
     std::vector<Eigen::Vector2d> getCorners() const {
         std::vector<Eigen::Vector2d> corners(4);
-        double cos_o = std::cos(orientation);
-        double sin_o = std::sin(orientation);
-        
-        // Local to world transformation
+        const double c = std::cos(orientation);
+        const double s = std::sin(orientation);
+
+        // y-down, θ clockwise-positive
         Eigen::Matrix2d R;
-        R << cos_o, -sin_o,
-             sin_o,  cos_o;
-        
+        R << c,  s,
+            -s,  c;
+
         corners[0] = center + R * Eigen::Vector2d( halfExtents.x(),  halfExtents.y());
         corners[1] = center + R * Eigen::Vector2d(-halfExtents.x(),  halfExtents.y());
         corners[2] = center + R * Eigen::Vector2d(-halfExtents.x(), -halfExtents.y());
         corners[3] = center + R * Eigen::Vector2d( halfExtents.x(), -halfExtents.y());
-        
         return corners;
     }
-    
+
     // Get the two axes of the OBB (normalized)
     std::pair<Eigen::Vector2d, Eigen::Vector2d> getAxes() const {
-        double cos_o = std::cos(orientation);
-        double sin_o = std::sin(orientation);
-        
-        Eigen::Vector2d axis1(cos_o, sin_o);   // Local X axis in world frame
-        Eigen::Vector2d axis2(-sin_o, cos_o);  // Local Y axis in world frame
-        
+        const double c = std::cos(orientation);
+        const double s = std::sin(orientation);
+
+        // Local x→world, local y→world (y-down)
+        Eigen::Vector2d axis1(c,  s);   // local X
+        Eigen::Vector2d axis2(-s, c);   // local Y
         return {axis1, axis2};
+    }
+
+    // Get the bounding radius of the OOB 
+    double getBoundingRadius () const {
+        double he_x = halfExtents.x();
+        double he_y = halfExtents.y();
+        return std::sqrt(he_x*he_x + he_y*he_y);
     }
 };
 
@@ -67,7 +73,7 @@ namespace GeometryUtils {
     }
     
     // Check if two OBBs are colliding using SAT
-    inline bool checkOBBCollision(const OBB2D& obb1, const OBB2D& obb2) {
+    inline bool overlapsOBB(const OBB2D& obb1, const OBB2D& obb2) {
         // Get axes from both OBBs (4 axes total for 2D)
         auto [axis1_1, axis1_2] = obb1.getAxes();
         auto [axis2_1, axis2_2] = obb2.getAxes();
@@ -87,6 +93,48 @@ namespace GeometryUtils {
         
         // No separating axis found, boxes must be colliding
         return true;
+    }
+
+    // Check if a point is inside an OBB
+    inline bool pointInOBB(const Eigen::Vector2d& point, const OBB2D& obb) {
+        // Transform point to OBB's local coordinate system
+        Eigen::Vector2d local_point = point - obb.center;
+        
+        // Rotate to align with OBB's axes (y-down, clockwise positive)
+        double cos_theta = std::cos(obb.orientation);
+        double sin_theta = std::sin(obb.orientation);
+        Eigen::Vector2d rotated_point;
+        rotated_point.x() =  local_point.x() * cos_theta + local_point.y() * sin_theta;
+        rotated_point.y() = -local_point.x() * sin_theta + local_point.y() * cos_theta;
+        
+        // Check if point is within the box bounds
+        return (std::abs(rotated_point.x()) <= obb.halfExtents.x() &&
+                std::abs(rotated_point.y()) <= obb.halfExtents.y());
+    }
+    
+    // Check if there is overlap between a sphere and an OBB
+    inline bool overlapsSphereOBB(Eigen::Ref<const Eigen::Vector2d> c, double r, const OBB2D& B, double eps) {
+        // Transform sphere center to OBB's local coordinate system
+        Eigen::Vector2d local_center = c - B.center;
+        
+        // Rotate to align with OBB's axes (y-down, clockwise positive)
+        double cos_theta = std::cos(B.orientation);
+        double sin_theta = std::sin(B.orientation);
+        Eigen::Vector2d rotated_center;
+        rotated_center.x() =  local_center.x() * cos_theta + local_center.y() * sin_theta;
+        rotated_center.y() = -local_center.x() * sin_theta + local_center.y() * cos_theta;
+        
+        // Find the closest point on the OBB to the sphere center (in local coords)
+        Eigen::Vector2d closest;
+        closest.x() = std::clamp(rotated_center.x(), -B.halfExtents.x(), B.halfExtents.x());
+        closest.y() = std::clamp(rotated_center.y(), -B.halfExtents.y(), B.halfExtents.y());
+        
+        // Calculate the distance from the sphere center to this closest point
+        Eigen::Vector2d diff = rotated_center - closest;
+        double dist_squared = diff.squaredNorm();
+        
+        // Check for overlap (including epsilon tolerance)
+        return dist_squared <= (r + eps) * (r + eps);
     }
     
     // Get minimum distance between two OBBs with penetration depth for overlaps
@@ -153,86 +201,5 @@ namespace GeometryUtils {
             }
             return { -min_overlap, n_hat };
         }
-    }
-    
-    // Get smooth pseudo-distance for gradient computation
-    // This provides a continuous differentiable approximation
-    inline double getSmoothOBBDistance(const OBB2D& obb1, const OBB2D& obb2) {
-        // Use ellipsoid approximation for smooth gradients
-        Eigen::Vector2d delta = obb2.center - obb1.center;
-        
-        // Transform to obb1's local frame
-        double cos1 = std::cos(-obb1.orientation);
-        double sin1 = std::sin(-obb1.orientation);
-        Eigen::Vector2d local_delta;
-        local_delta.x() = delta.x() * cos1 - delta.y() * sin1;
-        local_delta.y() = delta.x() * sin1 + delta.y() * cos1;
-        
-        // Normalized position in obb1's frame
-        Eigen::Vector2d norm_pos1;
-        norm_pos1.x() = local_delta.x() / (obb1.halfExtents.x() + 1e-6);
-        norm_pos1.y() = local_delta.y() / (obb1.halfExtents.y() + 1e-6);
-        
-        // Transform to obb2's local frame  
-        double angle_diff = obb2.orientation - obb1.orientation;
-        double cos_diff = std::cos(-angle_diff);
-        double sin_diff = std::sin(-angle_diff);
-        Eigen::Vector2d norm_pos2;
-        norm_pos2.x() = norm_pos1.x() * cos_diff - norm_pos1.y() * sin_diff;
-        norm_pos2.y() = norm_pos1.x() * sin_diff + norm_pos1.y() * cos_diff;
-        
-        // Ellipsoid distance approximation
-        double r1 = norm_pos1.norm();
-        double r2 = (obb2.halfExtents.x() + obb2.halfExtents.y()) / 
-                   (obb1.halfExtents.x() + obb1.halfExtents.y());
-        
-        // Smooth approximation that's negative when overlapping
-        return (r1 - 1.0 - r2) * obb1.halfExtents.norm();
-    }
-    
-    // Check if a point is inside an OBB
-    inline bool isPointInOBB(const Eigen::Vector2d& point, const OBB2D& obb) {
-        // Transform point to OBB's local coordinate system
-        Eigen::Vector2d local_point = point - obb.center;
-        
-        double cos_o = std::cos(-obb.orientation);  // Negative for inverse rotation
-        double sin_o = std::sin(-obb.orientation);
-        
-        Eigen::Vector2d rotated_point;
-        rotated_point.x() = local_point.x() * cos_o - local_point.y() * sin_o;
-        rotated_point.y() = local_point.x() * sin_o + local_point.y() * cos_o;
-        
-        // Check if point is within the box in local coordinates
-        return std::abs(rotated_point.x()) <= obb.halfExtents.x() &&
-               std::abs(rotated_point.y()) <= obb.halfExtents.y();
-    }
-    
-    // Get OBB from robot state
-    inline OBB2D getRobotOBB(const Eigen::VectorXd& state, const Eigen::Vector2d& dimensions) {
-        // State is [x, y, xdot, ydot, theta]
-        Eigen::Vector2d center(state(0), state(1));
-        Eigen::Vector2d halfExtents = dimensions / 2.0;
-        double orientation = state(4);  // theta is at index 4
-        
-        return OBB2D(center, halfExtents, orientation);
-    }
-    
-    // Normalize angle to [-π, π]
-    inline double normalizeAngle(double angle) {
-        while (angle > M_PI) angle -= 2.0 * M_PI;
-        while (angle < -M_PI) angle += 2.0 * M_PI;
-        return angle;
-    }
-    
-    // Get orientation from velocity
-    inline double getOrientationFromVelocity(double vx, double vy, double current_orientation = 0.0) {
-        double speed = std::sqrt(vx * vx + vy * vy);
-        
-        // If nearly stationary, keep current orientation
-        if (speed < 0.01) {
-            return current_orientation;
-        }
-        
-        return std::atan2(vy, vx);
     }
 }

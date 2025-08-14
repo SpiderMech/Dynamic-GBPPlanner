@@ -9,6 +9,7 @@
 #include <Robot.h>
 #include <DynamicObstacle.h>
 #include <Utils.h>
+#include "Metrics.hpp"
 
 /***************************************************************************/
 // Creates a robot. Inputs required are :
@@ -60,6 +61,15 @@ Robot::Robot(Simulator *sim, int rid,
         // Orientation is never included in waypoints, as it is computed from velocity
         Eigen::VectorXd wp = Eigen::VectorXd::Zero(5);
         waypoints_.push_back(wp);
+    }
+
+    // Compute base path length
+    if (waypoints_.size() > 1) {
+        for (int i = 0; i < waypoints_.size()-1; ++i) {
+            Eigen::Vector2d a = waypoints_[i].head<2>();
+            Eigen::Vector2d b = waypoints_[i+1].head<2>();
+            base_path_length_ += (b-a).norm();
+        }
     }
 
     // Robot will always set its horizon state to move towards the next waypoint.
@@ -392,7 +402,7 @@ void Robot::createInterrobotFactors(std::shared_ptr<Robot> other_robot)
         this->factors_[factor->key_] = factor;
     }
 
-    // Add the other robot to this robot's list of connected robots.
+    // Add the other robot to this robot's list of connected robots, so factor doesn't get duplicated.
     this->connected_r_ids_.push_back(other_robot->rid_);
 };
 
@@ -435,14 +445,15 @@ void Robot::updateDynamicObstacleFactors()
     std::vector<int> to_remove;
     for (int oid : connected_obs_ids_)
     {
-        if (sim_->obstacles_.find(oid) == sim_->obstacles_.end())
+        auto it = sim_->obstacles_.find(oid);
+        if (it == sim_->obstacles_.end())
         {
             to_remove.push_back(oid);
         }
         else
         {
             // Also remove factors for obstacles that have moved too far away
-            auto obs = sim_->obstacles_.at(oid);
+            auto obs = it->second;
             const double removal_threshold = globals.OBSTALCE_SENSOR_RADIUS + robot_radius_ + 3.0; // Slightly larger than culling threshold
 
             // Remove factor if obstacle is too far away from both current and future robot positions
@@ -551,7 +562,11 @@ double Robot::getDistToObs(std::shared_ptr<DynamicObstacle> obs)
 /***************************************************************************************************/
 void Robot::draw()
 {
-    Color col = (interrobot_comms_active_) ? color_ : GRAY;
+    // Color col = (interrobot_comms_active_) ? color_ : GRAY;
+    Color col = color_;
+    if (globals.EVAL) {
+        col = interrobot_comms_active_ ? color_ : sim_->metrics->getTrack(rid_).collided ? RED : GRAY;
+    }
     const auto& model_info = sim_->graphics->robotModels_[robot_type_];
     // Draw planned path
     if (globals.DRAW_PATH)
@@ -593,8 +608,8 @@ void Robot::draw()
     {
         for (auto rid : connected_r_ids_)
         {
-            if (!interrobot_comms_active_ || !sim_->robots_.at(rid)->interrobot_comms_active_)
-                continue;
+            // if (!interrobot_comms_active_ || !sim_->robots_.at(rid)->interrobot_comms_active_)
+            //     continue;
             DrawCylinderEx(Vector3{(float)position_(0), height_3D_, (float)position_(1)},
                            Vector3{(float)(*sim_->robots_.at(rid))[0]->mu_(0), sim_->robots_.at(rid)->height_3D_, (float)(*sim_->robots_.at(rid))[0]->mu_(1)},
                            0.1, 0.1, 4, BLACK);

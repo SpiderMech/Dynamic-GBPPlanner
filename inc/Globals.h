@@ -27,6 +27,7 @@ class Globals {
     int N_DOFS;                                             // Degrees of freedom, defaults to 4 (x, y, xdot, ydot), can be 5 (x, y, xdot, ydot)
     MODES_LIST SIM_MODE = Timestep;                         // Simulation mode to begin with
     MODES_LIST LAST_SIM_MODE = Timestep;                    // Storage of Simulation mode (if time is paused eg.)
+    bool EVAL = false;                                      // If running in eval mode
     
     // Display parameters
     bool DISPLAY;                                           // Show display or not
@@ -41,7 +42,8 @@ class Globals {
     // Simulation parameters
     int SEED;                                               // Random Seed 
     float TIMESTEP;                                         // Simulation timestep [s]
-    int MAX_TIME;                                           // Exit simulation if more timesteps than this
+    int MAX_TIMESTEP;                                       // Exit simulation if more timesteps than this
+    float MAX_TIME;                                         // Exit simulation if more time [s] than this or globals.TIMESTEP * timesteps, which ever is earlier
     bool NEW_OBSTACLES_NEEDED;                              // Whether to generate new obstacles
     bool NEW_ROBOTS_NEEDED;                                 // Whether to generate new robots   
     int NUM_ROBOTS;                                         // Number of robots (if no new robots are to be added)
@@ -61,11 +63,12 @@ class Globals {
     float SIGMA_FACTOR_DYNAMICS;                            // Sigma for Dynamics factors
     float SIGMA_FACTOR_INTERROBOT;                          // Sigma for Interrobot factor
     float SIGMA_FACTOR_OBSTACLE;                            // Sigma for Static obstacle factors
+    float SIGMA_FACTOR_DYNAMIC_OBSTACLE;                    // Sigma for Dynamic obstacle factors
     int NUM_ITERS;                                          // Number of iterations of GBP per timestep
     float DAMPING = 0.;                                     // Damping amount (not used in this work)
+    bool USE_DYNAMIC_OBS_FAC = true;                        // Flag for using dynamic obstacle factor                               
 
     // Dynamic Obstacle parameters
-    float SIGMA_FACTOR_DYNAMIC_OBSTACLE;                    // Sigma for Dynamic obstacle factors
     double RBF_GAMMA;                                       // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
     int NUM_NEIGHBOURS;                                     // Number of RBFs to combine for Dynamics Obstacle Factor
     double OBSTALCE_SENSOR_RADIUS;                          // Radius of area where obstacles inside are not skipped.

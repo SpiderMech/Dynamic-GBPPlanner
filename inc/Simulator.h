@@ -7,10 +7,12 @@
 #include <map>
 #include <memory>
 #include <algorithm>
+#include <unordered_set>
 
 #include <Utils.h>
 #include <gbp/GBPCore.h>
 #include <Graphics.h>
+#include <GeometryUtils.h>
 #include <gbp/Variable.h>
 #include <nanoflann.h>
 #include <TaskScheduler.h>
@@ -76,6 +78,9 @@ public:
                                                                  // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
 
     MetricsCollector* metrics;                                   // Helper class to record metrics during evaluation
+    
+    std::vector<OBB2D> spawn_zones_;                             // Spawn zones where collisions are ignored for young entities
+    double spawn_zone_time_threshold_ = 2.0;                     // Time threshold in seconds for spawn zone grace period
 
 
     /*******************************************************************************/
@@ -121,4 +126,9 @@ public:
     // Deletes the robot from the simulator's robots_, as well as any variable/factors associated.
     /*******************************************************************************/
     void deleteRobot(std::shared_ptr<Robot> robot);
+
+    /*******************************************************************************/
+    // Detect and log collisions between robots and obstacles
+    /*******************************************************************************/
+    void detectCollisions();
 };

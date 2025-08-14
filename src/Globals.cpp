@@ -16,6 +16,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     config_file >> j;
     ASSETS_DIR = j["ASSETS_DIR"];
     N_DOFS = j.value("N_DOFS", 4);
+    EVAL = static_cast<bool>((int)j.value("EVAL", 0));
 
     // Display parameters
     DISPLAY = static_cast<bool>((int)j["DISPLAY"]);;
@@ -29,7 +30,8 @@ void Globals::parse_global_args(std::ifstream& config_file){
     // Simulation parameters
     SEED = j["SEED"];
     TIMESTEP = j["TIMESTEP"];
-    MAX_TIME = j["MAX_TIME"];
+    MAX_TIME = static_cast<float>(j["MAX_TIME"]);
+    MAX_TIMESTEP = j["MAX_TIMESTEP"];
     NEW_OBSTACLES_NEEDED = static_cast<bool>((int)j["NEW_OBSTACLES_NEEDED"]);
     NEW_ROBOTS_NEEDED = static_cast<bool>((int)j["NEW_ROBOTS_NEEDED"]);
     NUM_ROBOTS = j["NUM_ROBOTS"];
@@ -44,13 +46,14 @@ void Globals::parse_global_args(std::ifstream& config_file){
     ITERATE_STEPS = j.value("ITERATE_STEPS", 1);
 
     // GBP parameters
+    NUM_ITERS = j["NUM_ITERS"];
     SIGMA_FACTOR_DYNAMICS = j["SIGMA_FACTOR_DYNAMICS"];
     SIGMA_FACTOR_INTERROBOT = j["SIGMA_FACTOR_INTERROBOT"];
     SIGMA_FACTOR_OBSTACLE = j["SIGMA_FACTOR_OBSTACLE"];
-    NUM_ITERS = j["NUM_ITERS"];
+    SIGMA_FACTOR_DYNAMIC_OBSTACLE = j.value("SIGMA_FACTOR_DYNAMIC_OBSTACLE", 0.05);
+    USE_DYNAMIC_OBS_FAC = static_cast<bool>((int)j.value("USE_DYNAMIC_OBS_FAC", 1));
 
     // Dynamic Obstacle parameters
-    SIGMA_FACTOR_DYNAMIC_OBSTACLE = j.value("SIGMA_FACTOR_DYNAMIC_OBSTACLE", 0.05);
     RBF_GAMMA = j.value("RBF_GAMMA", 1.0);
     NUM_NEIGHBOURS = j.value("NUM_NEIGHBOURS", 1);
     OBSTALCE_SENSOR_RADIUS = j.value("OBSTALCE_SENSOR_RADIUS", 3.0);

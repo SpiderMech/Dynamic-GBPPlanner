@@ -51,10 +51,14 @@ void FactorGraph::factorIteration(MsgPassingMode msg_passing_mode) {
 #pragma omp parallel for
     for (size_t idx = 0; idx < factor_list.size(); ++idx) {
         auto& [f_key, fac] = factor_list[idx];
+        
+        bool fac_is_external = fac->factor_type_ == INTERROBOT_FACTOR;
+        if (msg_passing_mode==INTERNAL && fac_is_external || msg_passing_mode==EXTERNAL && !fac_is_external) continue;
+        
         for (auto& var : fac->variables_){
-            // Check if the factor need to be skipped [see note in description]
             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
             if (msg_passing_mode==INTERNAL && fac->other_rid_!=robot_id_) continue;
+            // Check if the factor need to be skipped [see note in description]
             // Read message from each connected variable
             fac->inbox_[var->key_] = var->outbox_.at(f_key);
         }
@@ -108,6 +112,8 @@ void FactorGraph::variableIteration(MsgPassingMode msg_passing_mode){
             // * Check if the variable need to be skipped [see note in description]
             if (!interrobot_comms_active_ && fac->other_rid_!=robot_id_) continue;
             if (msg_passing_mode==INTERNAL && fac->other_rid_!=robot_id_) continue;
+            bool fac_is_external = fac->factor_type_ == INTERROBOT_FACTOR;
+            if (msg_passing_mode==INTERNAL && fac_is_external || msg_passing_mode==EXTERNAL && !fac_is_external) continue;
             // Read message from each connected factor
             var->inbox_[f_key] = fac->outbox_.at(v_key);
         }

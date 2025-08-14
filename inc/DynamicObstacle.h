@@ -42,8 +42,7 @@ class DynamicObstacle
 public:
     DynamicObstacle(int oid,
                     std::deque<Eigen::VectorXd> waypoints,
-                    std::shared_ptr<ObstacleModelInfo> geom,
-                    float elevation);
+                    std::shared_ptr<ObstacleModelInfo> geom);
     ~DynamicObstacle();
 
     std::shared_ptr<ObstacleModelInfo> geom_;   // Pointer to the obstacle's model info with KDTree support
@@ -52,9 +51,9 @@ public:
     std::map<int, Eigen::VectorXd> states_;     // Map of (robot) variable timestep to future obstacle state positions with orientation.
     std::vector<int> variable_timesteps_;       // List of (robot) variable timesteps.
     Eigen::Vector3d centre_;                    // The centre of the obstacle in world frame.
-    float elevation_ = 0.0;                     // Elevation (Y-axis) of the obstacle, controls how much it floats.
     float orientation_ = 0.0;                   // Current orientation of the obstacle in radians
     bool completed_ = false;                     // Whether the obstacle has completed it's path.
+    float spawn_time_ = 0.0;                    // Time when the obstacle was spawned (in seconds)
 
     std::deque<Eigen::VectorXd> waypoints_{};   // List of waypoints which determines the obstacle's path.
     float acc_tau_ = 2.5f;                      // Seconds to accelerate to ~63% target velocity of the next waypoint. Also used to predict future state.

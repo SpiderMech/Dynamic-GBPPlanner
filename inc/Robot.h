@@ -60,8 +60,9 @@ public:
     float task_timer_ = 0.f;                    // Countdown timer for task completion [seconds]
     bool next_wp_is_task_ = false;              // Flag indicating if robot is performing a task
     bool task_active_ = false;                  // Flag indicating if horizon has reached task waypoint
-    int current_task_id_ = -1;                  // Optional: ID of current task being performed
-    Key attractive_factor_key_ = Key(-1, -1);   // Key of the current attractive factor (if any)
+
+    double base_path_length_ = 0.0;             // Store minimal path length (sum of waypoint segment lengths)
+
 
     /****************************************/
     //Functions

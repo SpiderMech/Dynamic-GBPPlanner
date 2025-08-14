@@ -2,6 +2,7 @@
   "_comment0": "Basic parameters",
   "ASSETS_DIR": "../assets/",
   "N_DOFS": 4,
+  "EVAL": 1,
   
   "#": "Display parameters",
   "DISPLAY": 1,
@@ -15,7 +16,8 @@
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
-  "MAX_TIME": 10000,
+  "MAX_TIMESTEP": 10000,
+  "MAX_TIME": 300,
   "NEW_OBSTACLES_NEEDED": 1,
   "NEW_ROBOTS_NEEDED": 1,
   "NUM_ROBOTS": 1,
@@ -30,11 +32,14 @@
   "ITERATE_STEPS": 1,
 
   "###": "GBP parameters",
-  "SIGMA_FACTOR_DYNAMICS": 0.1,
-  "SIGMA_FACTOR_INTERROBOT": 0.01,
-  "SIGMA_FACTOR_OBSTACLE": 0.01,
-  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.01,
+  "SIGMA_FACTOR_DYNAMICS": 0.5,
+  "SIGMA_FACTOR_INTERROBOT": 0.005,
+  "SIGMA_FACTOR_OBSTACLE": 0.005,
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.005,
   "NUM_ITERS": 8,
+  "USE_DYNAMIC_OBS_FAC": 1,
+
+  "####": "Dynamic obstacle parameters",
   "RBF_GAMMA": 0.8,
   "NUM_NEIGHBOURS": 3,
   "OBSTALCE_SENSOR_RADIUS": 3.0

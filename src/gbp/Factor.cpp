@@ -177,7 +177,7 @@ bool Factor::update_factor()
     // debug msg flag
     if (dbg)
     {
-        print("********************************************");
+        // print("********************************************");
         dbg = false;
     }
     return true;
@@ -528,10 +528,7 @@ void InterrobotFactor::draw()
 {
     auto v_0 = variables_[0];
     auto v_1 = variables_[1];
-    if (!v_0->valid_ || !v_1->valid_)
-    {
-        return;
-    }
+   
     if (!dbg) {
         if (n_dofs_ == 5) {
             Eigen::Vector2d pos1(X_(0), X_(1));
@@ -621,8 +618,25 @@ void InterrobotFactor::draw()
 
             print(oss.str());
         }
+        
+        if (n_dofs_ == 4) {
+            if (r_id_ == 16 && other_rid_ == 19 || r_id_ == 19 && other_rid_ == 16 || r_id_ == 19 && other_rid_ == 19 || r_id_ == 16 && other_rid_ == 16) 
+            {
+                auto h = this->h_func_(X_);
+                Eigen::Vector2d pos1 = X_(seqN(0, n_dofs_ / 2)), pos2 = X_(seqN(n_dofs_, n_dofs_ / 2));
+                Eigen::VectorXd X_diff = pos1 - pos2;
+                X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2);
+                // printf("ts=[%d], rids=[%d, %d(other_rid)], h=[%f], r=[%f], pos1=[%f, %f], pos2=[%f, %f]\n", v_0->ts_, r_id_, other_rid_, h(0), X_diff.norm(), pos1.x(), pos1.y(), pos2.x(), pos2.y());
+            }
+        }
         dbg = true;
     }
+    
+    if (!v_0->valid_ || !v_1->valid_)
+    {
+        return;
+    }
+
     auto diff = v_0->mu_({0, 1}) - v_1->mu_({0, 1});
     if (diff.norm() <= safety_distance_)
     {

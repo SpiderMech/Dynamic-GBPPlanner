@@ -12,6 +12,7 @@
 
 #include <Globals.h>
 #include <Simulator.h>
+#include <Metrics.hpp>
 
 Globals globals;
 
@@ -32,6 +33,11 @@ int main(int argc, char *argv[]){
         sim->timestep();
         sim->draw();
 
+    }
+
+    if (globals.EVAL) {
+        auto R = sim->metrics->computeResults();
+        printResults(R);
     }
 
     delete sim;

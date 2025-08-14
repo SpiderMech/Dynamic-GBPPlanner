@@ -33,6 +33,12 @@
 
 build/
 debug/
+.vscode/
+docs/
+examples/
 
 # Python
 __pycache__/
+
+# Compile command output
+compile_commands.json
