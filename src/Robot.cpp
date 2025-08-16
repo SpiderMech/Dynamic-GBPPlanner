@@ -182,6 +182,7 @@ Robot::Robot(Simulator *sim, int rid,
         // Create variable and add to robot's factor graph
         auto variable = std::make_shared<Variable>(sim->next_vid_++, rid_, mu, sigma_list, robot_radius_, dofs_, variable_timesteps[i]);
         variables_[variable->key_] = variable;
+        variable_keys_.push_back(variable->key_);
     }
 
     /***************************************************************************/
@@ -293,11 +294,14 @@ void Robot::updateHorizon()
 
     auto horizon = getVar(-1);
     // Prevent horizon from moving beyond a threshold, in case robot is stuck
-    Eigen::VectorXd dist_curr_to_horz = horizon->mu_({0, 1}) - getVar(0)->mu_({0, 1});
-    if (dist_curr_to_horz.norm() >= globals.MAX_HORIZON_DIST)
-        return;
+    float L = 0.f;
+    for (int i = 1; i < variables_.size(); ++i) {
+        auto v1_p = variables_[variable_keys_[i]]->mu_.head<2>(0);
+        auto v0_p = variables_[variable_keys_[i-1]]->mu_.head<2>(0);
+        L += (v1_p-v0_p).norm();
+    }
 
-    if (waypoints_.size() > 0)
+    if (L <= globals.MAX_HORIZON_DIST && waypoints_.size() > 0)
     {
         auto &wp = waypoints_.front();
         // Check if next waypoint is a task
@@ -565,7 +569,8 @@ void Robot::draw()
     // Color col = (interrobot_comms_active_) ? color_ : GRAY;
     Color col = color_;
     if (globals.EVAL) {
-        col = interrobot_comms_active_ ? color_ : sim_->metrics->getTrack(rid_).collided ? RED : GRAY;
+        // col = interrobot_comms_active_ ? color_ : sim_->metrics->getTrack(rid_).collided ? RED : GRAY;
+        col = sim_->metrics->getTrack(rid_).collided ? RED : color_;
     }
     const auto& model_info = sim_->graphics->robotModels_[robot_type_];
     // Draw planned path

@@ -209,7 +209,8 @@ void Graphics::loadObstacleModels() {
     // Load vehicle models
     {
         std::vector<std::tuple<ObstacleType, std::string, double>> model_paths = {
-            {ObstacleType::BUS, globals.ASSETS_DIR + "models/Bus.obj", 0.0}
+            {ObstacleType::BUS, globals.ASSETS_DIR + "models/Bus.obj", 0.0},
+            {ObstacleType::VAN, globals.ASSETS_DIR + "models/Van.obj", 0.0}
         };
 
         for (const auto& [type, model_path, of] : model_paths) {

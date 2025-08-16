@@ -69,10 +69,15 @@ class Globals {
     bool USE_DYNAMIC_OBS_FAC = true;                        // Flag for using dynamic obstacle factor                               
 
     // Dynamic Obstacle parameters
-    double RBF_GAMMA;                                       // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
-    int NUM_NEIGHBOURS;                                     // Number of RBFs to combine for Dynamics Obstacle Factor
-    double OBSTALCE_SENSOR_RADIUS;                          // Radius of area where obstacles inside are not skipped.
-    double DEFAULT_OBS_SPEED;                               // [m/s]
+    double RBF_GAMMA;                               // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
+    int NUM_NEIGHBOURS;                             // Number of RBFs to combine for Dynamics Obstacle Factor
+    double OBSTALCE_SENSOR_RADIUS;                  // Radius of area where obstacles inside are not skipped.
+    double DEFAULT_OBS_SPEED;                       // [m/s]
+    
+    // Dynamic Obstacle type toggles
+    bool ENABLE_BUSES = true;                       // Enable/disable bus obstacles
+    bool ENABLE_VANS = true;                        // Enable/disable van obstacles  
+    bool ENABLE_PEDESTRIANS = true;                 // Enable/disable pedestrian obstacles
     
     Globals();
     int parse_global_args(DArgs::DArgs& dargs);

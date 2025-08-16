@@ -41,7 +41,7 @@ struct OBB2D {
         const double c = std::cos(orientation);
         const double s = std::sin(orientation);
 
-        // Local x→world, local y→world (y-down)
+        // To comply with world coord-system, R^T is CCW-positive
         Eigen::Vector2d axis1(c,  s);   // local X
         Eigen::Vector2d axis2(-s, c);   // local Y
         return {axis1, axis2};
@@ -104,8 +104,8 @@ namespace GeometryUtils {
         double cos_theta = std::cos(obb.orientation);
         double sin_theta = std::sin(obb.orientation);
         Eigen::Vector2d rotated_point;
-        rotated_point.x() =  local_point.x() * cos_theta + local_point.y() * sin_theta;
-        rotated_point.y() = -local_point.x() * sin_theta + local_point.y() * cos_theta;
+        rotated_point.x() =  local_point.x() * cos_theta + local_point.y() * -sin_theta;
+        rotated_point.y() =  local_point.x() * sin_theta + local_point.y() * cos_theta;
         
         // Check if point is within the box bounds
         return (std::abs(rotated_point.x()) <= obb.halfExtents.x() &&
@@ -117,12 +117,12 @@ namespace GeometryUtils {
         // Transform sphere center to OBB's local coordinate system
         Eigen::Vector2d local_center = c - B.center;
         
-        // Rotate to align with OBB's axes (y-down, clockwise positive)
+        // R^T for positive-CCW rotations, so R for reverse
         double cos_theta = std::cos(B.orientation);
         double sin_theta = std::sin(B.orientation);
         Eigen::Vector2d rotated_center;
-        rotated_center.x() =  local_center.x() * cos_theta + local_center.y() * sin_theta;
-        rotated_center.y() = -local_center.x() * sin_theta + local_center.y() * cos_theta;
+        rotated_center.x() =  local_center.x() * cos_theta + local_center.y() * -sin_theta;
+        rotated_center.y() =  local_center.x() * sin_theta + local_center.y() * cos_theta;
         
         // Find the closest point on the OBB to the sphere center (in local coords)
         Eigen::Vector2d closest;

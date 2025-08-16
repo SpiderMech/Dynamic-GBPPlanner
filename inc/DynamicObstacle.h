@@ -71,9 +71,6 @@ public:
     // Computation handled primarily by Geometry.getClosestPoints, this function mainly handles conversion between frames
     std::vector<std::pair<Eigen::Vector2d, double>> getNearestPoints(const Eigen::Vector2d &query_pt, const int k = 5, const float delta_t = 0) const;
 
-    // Compute the state vector of the obstalce delta_t seconds later
-    Eigen::VectorXd getStateAfterT(const float delta_t) const;
-
     // Compute the next state vector based on given waypoints and starting state
     Eigen::VectorXd getNextState(Eigen::VectorXd state, float delta_t, std::deque<Eigen::VectorXd> &waypoints, float& pause_timer);
 
@@ -82,4 +79,12 @@ public:
 
     // Functions for generating waypoints for specific scenarios
     static std::vector<std::deque<Eigen::VectorXd>> GenPedWaypoints(int n);
+    
+    // Junction waypoint generation functions
+    static std::deque<Eigen::VectorXd> generateBusWaypoints(int road, int turn, int lane, 
+                                                             double world_sz, double max_speed,
+                                                             double robot_radius);
+    static std::deque<Eigen::VectorXd> generateVanWaypoints(int lane,
+                                                             double world_sz, double max_speed, 
+                                                             double robot_radius);
 };

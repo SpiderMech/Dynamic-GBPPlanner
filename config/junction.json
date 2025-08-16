@@ -1,7 +1,8 @@
 {
   "_comment0": "Basic parameters",
   "ASSETS_DIR": "../assets/",
-  
+  "N_DOFS": 4,
+  "EVAL": 0,
   "#": "Display parameters",
   "DISPLAY": 1,
   "WORLD_SZ": 100,
@@ -9,24 +10,37 @@
   "DRAW_INTERROBOT": 0,
   "DRAW_PATH": 0,
   "DRAW_WAYPOINTS": 0,
-  
+  "DRAW_FACTORS": 0,
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
   "MAX_TIME": 10000,
+  "MAX_TIMESTEP": 10000,
+  "NEW_OBSTACLES_NEEDED": 0,
+  "NEW_ROBOTS_NEEDED": 0,
   "NUM_ROBOTS": 1,
   "T_HORIZON": 5,
+  "MAX_HORIZON_DIST": 15,
   "ROBOT_RADIUS": 1,
   "COMMUNICATION_RADIUS": 20,
   "MAX_SPEED": 2,
   "COMMS_FAILURE_RATE": 0,
   "FORMATION": "junction",
   "OBSTACLE_FILE": "../assets/imgs/junction.png",
-
+  "ITERATE_STEPS": 1,
   "###": "GBP parameters",
   "SIGMA_FACTOR_DYNAMICS": 0.1,
   "SIGMA_FACTOR_INTERROBOT": 0.01,
   "SIGMA_FACTOR_OBSTACLE": 0.01,
-  "NUM_ITERS": 10
-
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.05,
+  "NUM_ITERS": 10,
+  "USE_DYNAMIC_OBS_FAC": 1,
+  "####": "Dynamic Obstacles parameters",
+  "RBF_GAMMA": 1.0,
+  "NUM_NEIGHBOURS": 1,
+  "OBSTALCE_SENSOR_RADIUS": 3.0,
+  "DEFAULT_OBS_SPEED": 1.0,
+  "ENABLE_BUSES": 1,
+  "ENABLE_VANS": 1,
+  "ENABLE_PEDESTRIANS": 1
 }

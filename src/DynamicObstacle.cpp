@@ -2,7 +2,7 @@
 #include <DynamicObstacle.h>
 #include <nanoflann.h>
 #include <Utils.h>
-#include <Graphics.h>  // For ObstacleModelInfo
+#include <Graphics.h> // For ObstacleModelInfo
 
 DynamicObstacle::DynamicObstacle(int oid,
                                  std::deque<Eigen::VectorXd> waypoints,
@@ -11,21 +11,23 @@ DynamicObstacle::DynamicObstacle(int oid,
 {
     auto start = waypoints_.front();
     // Check if this waypoint has a pause time (5th dimension > 0)
-    if (start.size() >= 5 && start(4) > 0.0) {
-        pause_timer_ += start(4);  // Use 5th dimension for pause time
+    if (start.size() >= 5 && start(4) > 0.0)
+    {
+        pause_timer_ += start(4); // Use 5th dimension for pause time
     }
-    
+
     // Initialize state with position, velocity, and orientation
     state_.resize(5);
-    state_ << start(0), start(1), start(2), start(3), 0.0;  // Initial orientation is 0
-    
+    state_ << start(0), start(1), start(2), start(3), 0.0; // Initial orientation is 0
+
     // Calculate initial orientation from velocity if moving
     Eigen::Vector2d velocity(start(2), start(3));
-    if (velocity.norm() > 1e-6) {
-        orientation_ = -wrapAngle(std::atan2(start(3), start(2)));  // Store in Y-down convention
+    if (velocity.norm() > 1e-6)
+    {
+        orientation_ = -wrapAngle(std::atan2(start(3), start(2))); // Store in Y-down convention
         state_(4) = orientation_;
     }
-    
+
     states_[0] = state_;
     waypoints_.pop_front();
 
@@ -76,23 +78,23 @@ std::pair<Eigen::Matrix3f, Eigen::VectorXd> DynamicObstacle::getLocalToWorldTran
 {
     int ts = static_cast<int>(delta_t / globals.T0);
     Eigen::VectorXd s = states_.at(ts);
-    
+
     // Create transformation matrix with rotation and translation
     Eigen::Matrix3f tf = Eigen::Matrix3f::Identity();
     float cos_theta = std::cos(s(4) + geom_->orientation_offset);
     float sin_theta = std::sin(s(4) + geom_->orientation_offset);
-    
+
     // Set rotation part (2D rotation in X-Y plane)
     // For Y-down coordinate system, positive rotation is clockwise
     tf(0, 0) = cos_theta;
-    tf(0, 1) = sin_theta;   // Flipped for Y-down
-    tf(1, 0) = -sin_theta;  // Flipped for Y-down
+    tf(0, 1) = sin_theta;  // Flipped for Y-down
+    tf(1, 0) = -sin_theta; // Flipped for Y-down
     tf(1, 1) = cos_theta;
-    
+
     // Set translation part
-    tf(0, 2) = s[0];  // X translation
-    tf(1, 2) = s[1];  // Y translation
-    
+    tf(0, 2) = s[0]; // X translation
+    tf(1, 2) = s[1]; // Y translation
+
     return {tf, s};
 }
 
@@ -131,44 +133,9 @@ std::vector<std::pair<Eigen::Vector2d, double>> DynamicObstacle::getNearestPoint
 }
 
 /***************************************************************************************************/
-// Compute the state vector of the obstalce delta_t seconds later
-/***************************************************************************************************/
-Eigen::VectorXd DynamicObstacle::getStateAfterT(const float delta_t) const
-{
-    Eigen::VectorXd s = state_;
-    auto wpts = waypoints_;
-    float time_remaining = delta_t;
-    const float dt = globals.TIMESTEP;
-    // Simulate obstacle path for delta_t s
-    while (time_remaining > 0.f && !wpts.empty())
-    {
-        float step = time_remaining < dt ? time_remaining : dt;
-        Eigen::Vector2d current_vel = s.segment<2>(2);
-        Eigen::Vector2d target_vel = wpts.front().segment<2>(2);
-        float alpha = dt / acc_tau_;
-        Eigen::Vector2d new_vel = current_vel + alpha * (target_vel - current_vel);
-        Eigen::Vector2d dir = wpts.front()({0, 1}) - s({0, 1});
-        float dist_to_wp = dir.norm();
-        dir.normalize();
-        s.segment<2>(0) += new_vel.norm() * dir * step;
-        s.segment<2>(2) = new_vel;
-        
-        // Update orientation based on velocity
-        if (new_vel.norm() > 1e-6) {
-            s(4) = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));
-        }
-        
-        if (dist_to_wp < thresh_)
-            wpts.pop_front();
-        time_remaining -= step;
-    }
-    return s;
-}
-
-/***************************************************************************************************/
 // Compute the next state vector based on given waypoints and starting state
 /***************************************************************************************************/
-Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta_t, std::deque<Eigen::VectorXd>& waypoints, float& pause_timer)
+Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta_t, std::deque<Eigen::VectorXd> &waypoints, float &pause_timer)
 {
     Eigen::VectorXd s = state;
     float time_remaining = delta_t;
@@ -176,8 +143,9 @@ Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta
     while (time_remaining > 0.f && !waypoints.empty())
     {
         float step = time_remaining < dt ? time_remaining : dt;
-        
-        if (pause_timer > 0.f) {
+
+        if (pause_timer > 0.f)
+        {
             pause_timer = std::max(0.f, pause_timer - step);
             time_remaining -= step;
             continue;
@@ -185,15 +153,19 @@ Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta
 
         // Check if this waypoint has a pause time (5th dimension > 0)
         bool next_wp_is_pause = waypoints.front().size() >= 5 && waypoints.front()(4) > 0.0;
-        
+
         Eigen::Vector2d current_vel = s.segment<2>(2);
-        Eigen::Vector2d target_vel = next_wp_is_pause ? current_vel : 
-                                                        waypoints.front().segment<2>(2);
+        // Eigen::Vector2d target_vel = next_wp_is_pause ? current_vel :
+        //                                                 waypoints.front().segment<2>(2);
+        Eigen::Vector2d target_vel = waypoints.front().segment<2>(2);
         float alpha = acc_tau_;
-        if (target_vel.norm() <= current_vel.norm()) {
+        if (target_vel.norm() <= current_vel.norm())
+        {
             // use dec_tau if decelerating
             alpha = dt / dec_tau_;
-        } else {
+        }
+        else
+        {
             alpha = dt / acc_tau_;
         }
         Eigen::Vector2d new_vel = current_vel + alpha * (target_vel - current_vel);
@@ -202,15 +174,18 @@ Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta
         dir.normalize();
         s.segment<2>(0) += new_vel.norm() * dir * step;
         s.segment<2>(2) = new_vel;
-        
+
         // Update orientation based on velocity (only if moving)
-        if (new_vel.norm() > 1e-6) {
+        if (new_vel.norm() > 1e-6)
+        {
             s(4) = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));
         }
         // If velocity is zero, keep current orientation (s(4) unchanged)
-        
-        if (dist_to_wp < thresh_) {
-            if (next_wp_is_pause) pause_timer += waypoints.front()(4);  // Use 5th dimension for pause time
+
+        if (dist_to_wp < thresh_)
+        {
+            if (next_wp_is_pause)
+                pause_timer += waypoints.front()(4); // Use 5th dimension for pause time
             waypoints.pop_front();
         }
         time_remaining -= step;
@@ -224,52 +199,59 @@ Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta
 /***************************************************************************************************/
 void DynamicObstacle::draw()
 {
-    if (globals.DRAW_OBSTACLES) {
+    if (globals.DRAW_OBSTACLES)
+    {
         // Convert orientation from radians to degrees for Raylib
         float rotation = wrapAngle(orientation_ + geom_->orientation_offset);
         // Add the model's default offset (similar to robots)
         float rotation_degrees = rotation * (180.0f / M_PI);
-        
+
         // Use DrawModelEx to include rotation
         DrawModelEx(geom_->model,
                     Vector3{(float)state_[0], -geom_->boundingBox.min.y, (float)state_[1]},
-                    Vector3{0.0f, 1.0f, 0.0f},  // Rotate around Y axis
-                    rotation_degrees,           // Rotation angle in degrees
-                    Vector3{1.0f, 1.0f, 1.0f},  // Scale
-                    geom_->color);               // Color tint
+                    Vector3{0.0f, 1.0f, 0.0f}, // Rotate around Y axis
+                    rotation_degrees,          // Rotation angle in degrees
+                    Vector3{1.0f, 1.0f, 1.0f}, // Scale
+                    geom_->color);             // Color tint
     }
 }
 
 /***************************************************************************************************/
 // Functions for generating waypoints for specific scenarios
 /***************************************************************************************************/
-std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n) {
+std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n)
+{
     std::vector<std::deque<Eigen::VectorXd>> waypoints_vec;
-    if (globals.FORMATION == "junction_twoway") {
+    if (globals.FORMATION == "junction_twoway")
+    {
         int n_lanes = 2;
         double lane_width = 4. * globals.ROBOT_RADIUS;
         double road_half_width = n_lanes * lane_width;
-        double spawn_offset = globals.ROBOT_RADIUS;  // offset just outside the road edge
+        double spawn_offset = globals.ROBOT_RADIUS; // offset just outside the road edge
         double border = road_half_width + spawn_offset;
         double world_half = globals.WORLD_SZ / 2.;
 
-        for (int i = 0; i < n; ++i) {
+        for (int i = 0; i < n; ++i)
+        {
             bool horizontal = random_int(0, 1) == 1;
             double speed = double(random_float(float(globals.DEFAULT_OBS_SPEED), 2.f));
             double side = (random_int(0, 1) == 1) ? 1.0 : -1.0;
-            double pos  = (random_int(0, 1) == 0) ? random_float(-world_half, -road_half_width)
-                                                  : random_float(road_half_width, world_half);
+            double pos = (random_int(0, 1) == 0) ? random_float(-world_half, -road_half_width)
+                                                 : random_float(road_half_width, world_half);
             Eigen::VectorXd start(5), end(5);
-            if (horizontal) {
+            if (horizontal)
+            {
                 // Crossing a horizontal road: vary x, spawn above or below
                 double z0 = side * border;
-                start << pos, z0, 0.0, -side * speed, 0.0;  // 5th dimension (pause time) = 0
-                end   << pos, -z0, 0.0, -side * speed, 0.0; // 5th dimension (pause time) = 0
-            } else {
+                start << pos, z0, 0.0, -side * speed, 0.0; // 5th dimension (pause time) = 0
+                end << pos, -z0, 0.0, -side * speed, 0.0;  // 5th dimension (pause time) = 0
+            }
+            else
+            {
                 // Crossing a vertical road: vary z, spawn left or right
                 double x0 = side * border;
-                start <<  x0, pos, -side * speed, 0.0, 0.0; // 5th dimension (pause time) = 0
-                end   << -x0, pos, -side * speed, 0.0, 0.0; // 5th dimension (pause time) = 0
+                start << x0, pos, -side * speed, 0.0, 0.0; // 5th dimension (pause time) = 0
+                end << -x0, pos, -side * speed, 0.0, 0.0;  // 5th dimension (pause time) = 0
             }
             waypoints_vec.emplace_back();
             waypoints_vec.back().push_back(start);
@@ -277,4 +259,140 @@ std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n)
         }
     }
     return waypoints_vec;
+}
+
+/***************************************************************************************************/
+// Generate waypoints for bus obstacles in junction_twoway formation
+/***************************************************************************************************/
+std::deque<Eigen::VectorXd> DynamicObstacle::generateBusWaypoints(int road, int turn, int lane,
+                                                                  double world_sz, double max_speed,
+                                                                  double robot_radius)
+{
+    // Constants
+    const int n_lanes = 2;
+    const double lane_width = 4.0 * robot_radius;
+
+    // Create rotation matrix for the road
+    Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
+    double angle = PI / 2.0 * road;
+    double c = std::cos(angle);
+    double s = std::sin(angle);
+    rot.block<2, 2>(0, 0) << c, -s, s, c;
+    rot.block<2, 2>(2, 2) << c, -s, s, c;
+
+    // Calculate lane offsets
+    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width + 1.0;
+    double lane_h_offset = (1 - turn) * (0.5 + lane - n_lanes) * lane_width;
+
+    // Define key waypoints
+    Eigen::VectorXd starting(5), turning(5), ending(5);
+    starting = rot * Eigen::VectorXd{{-world_sz / 2.0 - 10.0, lane_v_offset, 1.0 * max_speed, 0.0, 0.0}};
+    turning = rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, 1.0 * max_speed, 0.0, 0.0}};
+    ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * world_sz / 2.0,
+                                    lane_v_offset + (turn - 1) * world_sz / 2.0,
+                                    (turn % 2) * max_speed * 1.0,
+                                    (turn - 1) * max_speed * 1.0,
+                                    0.0}};
+
+    // Build waypoint list
+    std::deque<Eigen::VectorXd> waypoints = {starting};
+
+    // Calculate segment boundaries
+    double junction_edge = 2.0 * lane_width;                 // Distance from center to edge of junction box
+    double segment1_length = world_sz / 2.0 - junction_edge; // Length before junction
+    double segment2_length = world_sz / 2.0 - junction_edge; // Length after junction
+
+    // Add stops in segment 1 (before junction)
+    int seg1_stops = random_int(1, 2);
+    for (int i = 0; i < seg1_stops; ++i)
+    {
+        double stop_x = -world_sz / 2.0 + (i + 1) * segment1_length / (seg1_stops + 1);
+        double pause_time = random_float(2.0, 4.0);
+        waypoints.push_back(rot * Eigen::VectorXd{{stop_x, lane_v_offset, 1.0 * max_speed, 0.0, pause_time}});
+    }
+
+    // Add turning waypoint at junction
+    waypoints.push_back(turning);
+
+    // Add stops in segment 2 (after junction)
+    int seg2_stops = random_int(0, 2);
+    for (int i = 0; i < seg2_stops; ++i)
+    {
+        double pause_time = random_float(2.0, 4.0);
+        // Calculate stop position based on turn direction
+        // turn=0 (left): move in -Y direction, turn=1 (straight): move in +X, turn=2 (right): move in +Y
+        double stop_pos = junction_edge + (i + 1) * segment2_length / (seg2_stops + 1);
+        Eigen::VectorXd stop_wp{{lane_h_offset + (turn % 2) * stop_pos,
+                                 lane_v_offset + (turn - 1) * stop_pos,
+                                 (turn % 2) * globals.MAX_SPEED * 1.,
+                                 (turn - 1) * globals.MAX_SPEED * 1.,
+                                 (double)pause_time}};
+        waypoints.push_back(rot * stop_wp);
+    }
+
+    // Add ending waypoint
+    waypoints.push_back(ending);
+
+    return waypoints;
+}
+
+/***************************************************************************************************/
+// Generate waypoints for van obstacles (delivery vehicles) in junction_twoway formation
+/***************************************************************************************************/
+std::deque<Eigen::VectorXd> DynamicObstacle::generateVanWaypoints(int lane,
+                                                                  double world_sz, double max_speed,
+                                                                  double robot_radius)
+{
+    const double lane_width = 4.0 * robot_radius;
+    double junction_edge = 2.0 * lane_width;
+    double segment_length = world_sz / 2.0 - junction_edge;
+    const int n_roads = 4, n_lanes = 2;
+    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width + 1.0;
+    double lane_h_offset = (0.5 - n_lanes) * lane_width;
+    
+    std::deque<Eigen::VectorXd> delivery_points;
+    
+    std::deque<Eigen::VectorXd> temp_entries;
+    std::deque<Eigen::VectorXd> temp_exits;
+    std::deque<Eigen::VectorXd> left_turns;
+    std::deque<Eigen::VectorXd> gaps;
+
+    for (int road = 0; road < n_roads; ++road) {
+        // Define rotation matrix
+        Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
+        double angle = PI / 2.0 * road;
+        double c = std::cos(angle);
+        double s = std::sin(angle);
+        rot.block<2, 2>(0, 0) << c, -s, s, c;
+        rot.block<2, 2>(2, 2) << c, -s, s, c;
+        
+        int seg_stops = 2;
+        for (int i = 0; i < seg_stops; ++i) {
+            double pause_time = random_float(2.f, 4.f);
+            double stop_x = -world_sz / 2.0 + (i + 1) * segment_length / (seg_stops + 1);
+            temp_entries.push_back(rot * Eigen::VectorXd{{stop_x, lane_v_offset, 1.0 * max_speed, 0.0, pause_time}});
+            temp_exits.push_back(rot * Eigen::VectorXd{{stop_x, -lane_v_offset, -1.0 * max_speed, 0.0, pause_time}});
+            left_turns.push_back(rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, (i==0) * 1.0 * max_speed, (i==1) * -1.0 * max_speed, 0.0}});
+            gaps.push_back(rot * Eigen::VectorXd{{stop_x, 0.0, 0.0, -1.0 * max_speed, 0.0}});
+        }
+    }
+    // Shift first two exits to the back
+    for (int i = 0; i < 2; ++i) {
+        auto shift = temp_exits.front();
+        temp_exits.pop_front();
+        temp_exits.push_back(shift);
+    }
+    int skip_first = false, skip_second = false;
+    for (int i = 0; i < temp_entries.size(); i+=2) {
+        if (i > 0 && !(skip_first && skip_second)) delivery_points.push_back(gaps[skip_second ? i+1 : i]);
+        if (!skip_second) delivery_points.push_back(temp_entries[i]);
+        if (!skip_first) delivery_points.push_back(temp_entries[i+1]);
+        delivery_points.push_back(left_turns[(skip_first && skip_second && i > 0) ? i+1 : i]);
+        skip_first = static_cast<bool>(random_int(0, 1));
+        skip_second = static_cast<bool>(random_int(0, 1));
+        if (!skip_first) delivery_points.push_back(temp_exits[i+1]);
+        if (!skip_second) delivery_points.push_back(temp_exits[i]);
+    }
+
+    return delivery_points;
 }

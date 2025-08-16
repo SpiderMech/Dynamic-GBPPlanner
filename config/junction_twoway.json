@@ -16,13 +16,13 @@
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
-  "MAX_TIMESTEP": 10000,
   "MAX_TIME": 300,
+  "MAX_TIMESTEP": 10000,
   "NEW_OBSTACLES_NEEDED": 1,
   "NEW_ROBOTS_NEEDED": 1,
   "NUM_ROBOTS": 1,
   "T_HORIZON": 3,
-  "MAX_HORIZON_DIST": 20,
+  "MAX_HORIZON_DIST": 5,
   "ROBOT_RADIUS": 1,
   "COMMUNICATION_RADIUS": 10,
   "MAX_SPEED": 2,
@@ -30,17 +30,21 @@
   "FORMATION": "junction_twoway",
   "OBSTACLE_FILE": "../assets/imgs/junction_twoway/junction_twoway.png",
   "ITERATE_STEPS": 1,
-
+  
   "###": "GBP parameters",
   "SIGMA_FACTOR_DYNAMICS": 0.5,
-  "SIGMA_FACTOR_INTERROBOT": 0.005,
-  "SIGMA_FACTOR_OBSTACLE": 0.005,
-  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.005,
+  "SIGMA_FACTOR_INTERROBOT": 0.01,
+  "SIGMA_FACTOR_OBSTACLE": 0.01,
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.01,
   "NUM_ITERS": 8,
   "USE_DYNAMIC_OBS_FAC": 1,
-
+  
   "####": "Dynamic obstacle parameters",
   "RBF_GAMMA": 0.8,
   "NUM_NEIGHBOURS": 3,
-  "OBSTALCE_SENSOR_RADIUS": 3.0
+  "OBSTALCE_SENSOR_RADIUS": 3.0,
+  "DEFAULT_OBS_SPEED": 1.0,
+  "ENABLE_BUSES": 1,
+  "ENABLE_VANS": 1,
+  "ENABLE_PEDESTRIANS": 1
 }

@@ -310,15 +310,15 @@ void Simulator::createOrDeleteRobots()
     if (globals.FORMATION == "playground")
     {
         new_robots_needed_ = globals.NEW_ROBOTS_NEEDED;
-        std::deque<Eigen::VectorXd> wps1{
-            Eigen::VectorXd{{-20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}},
-            Eigen::VectorXd{{20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}}};
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
+        // std::deque<Eigen::VectorXd> wps1{
+        //     Eigen::VectorXd{{-20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}},
+        //     Eigen::VectorXd{{20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}}};
+        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
 
-        std::deque<Eigen::VectorXd> wps2{
-            Eigen::VectorXd{{20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}},
-            Eigen::VectorXd{{-20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}}};
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
+        // std::deque<Eigen::VectorXd> wps2{
+        //     Eigen::VectorXd{{20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}},
+        //     Eigen::VectorXd{{-20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}}};
+        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -545,12 +545,13 @@ void Simulator::createOrDeleteObstacles()
     {
         new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
         std::deque<Eigen::VectorXd> wps;
-        Eigen::VectorXd wp1(5), wp2(5), wp3(5);
-        wp1 << -10., 0., 1., 0., 0.;
-        wp2 << 0., 0., 1., 0., 10.;
-        wp3 << 0., -10., 0., -1., 0.;
-        wps = {wp1, wp2, wp3};
-        auto model = graphics->obstacleModels_[ObstacleType::BUS];
+        Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5);
+        wp1 << -10., -5., 1., 0., 0.;
+        wp2 <<   0., -5., 1., 0., 0.;
+        wp3 <<   0.,  5., 0., 1., 0.;
+        wp4 << -10.,  5., -1., 0., 0.;
+        wps = {wp1, wp2, wp3, wp4};
+        auto model = graphics->obstacleModels_[ObstacleType::VAN];
         // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
         auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
         obs_to_create.push_back(obs);
@@ -665,18 +666,27 @@ void Simulator::createOrDeleteObstacles()
         float now = clock_ * globals.TIMESTEP;
         static bool initialised = false;
 
-        // Define PoissonSpawners for vehicle obstacles
-        static std::vector<PoissonSpawner> spawners = {
-            {60.0, 3.0, "r0"}, /* Road 0 */
-            {75.0, 30.0, "r1"}, /* Road 1 */
-            {50.0, 30.0, "r2"}, /* Road 2 */
-            {120.0, 30.0, "r3"} /* Road 3 */
+        // Define PoissonSpawners for bus obstacles
+        static std::vector<PoissonSpawner> bus_spawners = {
+            {30.0, 10.0, "bus_r0", globals.ENABLE_BUSES}, /* Road 0 */
+            {30.0, 10.0, "bus_r1", globals.ENABLE_BUSES}, /* Road 1 */
+            {30.0, 10.0, "bus_r2", globals.ENABLE_BUSES}, /* Road 2 */
+            {30.0, 10.0, "bus_r3", globals.ENABLE_BUSES} /* Road 3 */
+        };
+        
+        // Define PoissonSpawners for van obstacles (delivery vehicles)
+        static std::vector<PoissonSpawner> van_spawners = {
+            {30.0, 10.0, "van_r0", globals.ENABLE_VANS}, /* Road 0 */
+            // {75.0, 10.0, "van_r1", globals.ENABLE_VANS}, /* Road 1 */
+            // {50.0, 10.0, "van_r2", globals.ENABLE_VANS}, /* Road 2 */
+            // {120.0, 10.0, "van_r3", globals.ENABLE_VANS} /* Road 3 */
         };
 
         // Set initial next_spawn, only needs to be called once
         if (!initialised)
         {
-            for (auto& spawner : spawners) spawner.schedule_from(now);
+            for (auto& spawner : bus_spawners) spawner.schedule_from(now);
+            for (auto& spawner : van_spawners) spawner.schedule_from(now);
             initialised = true;
         }
 
@@ -698,36 +708,40 @@ void Simulator::createOrDeleteObstacles()
         auto lane_v_offset = [n_lanes, lane_width](int lane) {return (0.5 * (1 - 2. * n_lanes) + lane) * lane_width + 1.0;};
         auto lane_h_offset = [n_lanes, lane_width](int turn, int lane) {return (1 - turn) * (0.5 + lane - n_lanes) * lane_width;};
 
-        for (int road = 0; road < spawners.size(); ++road) {
-            if (spawners[road].try_spawn(now)) {
-                // Random turn (0=left, 1=straight, 2=right) and lane
-                int turn = random_int(0, 2);
-                int lane = random_int(0, n_lanes - 1);
-
-                
-                // Get rotation matrix for this road
-                Eigen::Matrix<double, 5, 5> rot = makeRotationMatrix5(road);
-                
-                // Calculate offsets
-                double v_offset = lane_v_offset(lane);
-                double h_offset = lane_h_offset(turn, lane);
-                
-                // Define waypoints adjusted for DynamicObstacle's velocity interpolation behavior
-                Eigen::VectorXd starting(5), turning(5), ending(5);
-                starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2. - 10., v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
-                turning = rot * Eigen::VectorXd{{h_offset, v_offset, 1. * globals.MAX_SPEED, 0., 0.}};
-                ending = rot * Eigen::VectorXd{{h_offset + (turn % 2) * globals.WORLD_SZ / 2., v_offset + (turn - 1) * globals.WORLD_SZ / 2., (turn % 2) * globals.MAX_SPEED * 1., (turn - 1) * globals.MAX_SPEED * 1., 0.}};
-                
-                // Create waypoints deque
-                std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
-
-                // Create the obstacle
-                auto model = graphics->obstacleModels_[ObstacleType::BUS];
-                auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model);
-                obs_to_create.push_back(obs);
+        // Spawn buses (if enabled)
+        if (globals.ENABLE_BUSES) {
+            for (int road = 0; road < bus_spawners.size(); ++road) {
+                if (bus_spawners[road].try_spawn(now)) {
+                    // Random turn (0=left, 1=straight, 2=right) and lane
+                    int turn = random_int(0, 2);
+                    // int lane = random_int(0, n_lanes - 1);
+                    
+                    // Generate waypoints using the static method
+                    auto waypoints = DynamicObstacle::generateBusWaypoints(
+                        road, turn, 0, globals.WORLD_SZ, globals.MAX_SPEED, globals.ROBOT_RADIUS);
+                    
+                    // Create the obstacle
+                    auto model = graphics->obstacleModels_[ObstacleType::BUS];
+                    auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model);
+                    obs_to_create.push_back(obs);
+                }
             }
         }
-
+        
+        // Spawn vans with delivery behavior (if enabled)
+        if (globals.ENABLE_VANS) {
+            for (int road = 0; road < van_spawners.size(); ++road) {
+                if (van_spawners[road].try_spawn(now)) {
+                    auto waypoints = DynamicObstacle::generateVanWaypoints(
+                        0, globals.WORLD_SZ, globals.MAX_SPEED, globals.ROBOT_RADIUS
+                    );
+                    auto model = graphics->obstacleModels_[ObstacleType::VAN];
+                    auto obs = std::make_shared<DynamicObstacle>(next_oid_++, waypoints, model);
+                    obs_to_create.push_back(obs);
+                }
+            }
+        }
+        
         // Clean up completed obstacles
         for (auto [oid, obs] : obstacles_)
         {
@@ -960,8 +974,7 @@ void Simulator::detectCollisions()
             
             if (robots_are_spheres) {
                 // Sphere-OBB collision
-                collision = GeometryUtils::overlapsSphereOBB(
-                    robot_pos, robot_radius, obs_obb, eps);
+                collision = GeometryUtils::overlapsSphereOBB(robot_pos, robot_radius, obs_obb, eps);
             } else {
                 // OBB-OBB collision
                 double robot_theta = 0.0;
@@ -987,7 +1000,7 @@ void Simulator::detectCollisions()
                 if (seen_pairs_.count(pair_id) == 0) {
                     // Check if collision should be ignored due to spawn zone
                     if (!shouldIgnoreCollision(rid, -oid, robot_pos)) {
-                        printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f]\n", current_time, rid, oid, robot_pos.x(), robot_pos.y());
+                        printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f], theta_o=[%f]\n", current_time, rid, oid, robot_pos.x(), robot_pos.y(), obs_theta);
                         globals.LAST_SIM_MODE = Iterate;
                         globals.SIM_MODE = SimNone;
                         seen_pairs_.insert(pair_id);

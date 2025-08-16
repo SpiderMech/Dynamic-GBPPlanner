@@ -58,6 +58,11 @@ void Globals::parse_global_args(std::ifstream& config_file){
     NUM_NEIGHBOURS = j.value("NUM_NEIGHBOURS", 1);
     OBSTALCE_SENSOR_RADIUS = j.value("OBSTALCE_SENSOR_RADIUS", 3.0);
     DEFAULT_OBS_SPEED = j.value("DEFAULT_OBS_SPEED", 1.0);
+    
+    // Dynamic Obstacle type toggles
+    ENABLE_BUSES = static_cast<bool>((int)j.value("ENABLE_BUSES", 1));
+    ENABLE_VANS = static_cast<bool>((int)j.value("ENABLE_VANS", 1));
+    ENABLE_PEDESTRIANS = static_cast<bool>((int)j.value("ENABLE_PEDESTRIANS", 1));
 }
 
 Globals::Globals(){};

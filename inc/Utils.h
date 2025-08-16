@@ -23,6 +23,7 @@ enum class RobotType {
 enum class ObstacleType {
     CUBE,
     BUS,
+    VAN,
     PEDESTRIAN
 };
 
@@ -91,6 +92,12 @@ int random_int(int lower, int upper);
 
 float random_float(float lower, float upper);
 
+template <typename T>
+T random_choice_one(const std::vector<T>& v) {
+    std::uniform_int_distribution<size_t> dist(0, v.size() - 1);
+    return v[dist(rng)];
+}
+
 /***************************************************************************************************************/
 // POISSON SPAWNER
 /***************************************************************************************************************/
@@ -115,24 +122,26 @@ struct PoissonSpawner {
     std::mt19937_64 rng;
     std::exponential_distribution<double> exp;
     std::string name;
+    bool dbg = false;
 
-    PoissonSpawner(double M, double Hmin, const std::string& n = "")
+    PoissonSpawner(double M, double Hmin, const std::string& n = "", bool verbose = false)
         : mean(M),
           hmin(Hmin),
           rng(globals.SEED),
           exp(1.0 / (M - Hmin)),
           next_spawn(0.0),
-          name(n) {}
+          name(n),
+          dbg(verbose) {}
 
     void schedule_from(double now) {
         next_spawn = now + hmin + exp(rng);
-        print(name, next_spawn);
+        if (dbg) printf("%s next spawn: %.3f\n", name.c_str(), next_spawn);
     }
 
     bool try_spawn(double now) {
         if (now >= next_spawn) {
             next_spawn += hmin + exp(rng); // schedule next
-            print(name, next_spawn);
+            if (dbg) printf("%s next spawn: %.3f\n", name.c_str(), next_spawn);
             return true; // spawn now
         }
         return false;

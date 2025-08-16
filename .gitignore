@@ -42,3 +42,6 @@ __pycache__/
 
 # Compile command output
 compile_commands.json
+
+*.DS_Store
+WARP.md
