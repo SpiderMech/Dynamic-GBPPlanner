@@ -33,6 +33,7 @@ class Globals {
     bool DISPLAY;                                           // Show display or not
     int WORLD_SZ;                                           // [m]
     int SCREEN_SZ;                                          // [pixels]
+    bool VERBOSE = false;                                   // Flag for dbg message verbosity
     bool DRAW_INTERROBOT;                                   // Toggle display of inter-robot connections
     bool DRAW_PATH;                                         // Toggle display of planned paths
     bool DRAW_WAYPOINTS;                                    // Toggle display of path planning goals

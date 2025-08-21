@@ -25,6 +25,8 @@ int main(int argc, char *argv[]){
     
     Simulator* sim = new Simulator();       // Initialise the simulator
     globals.RUN = true;
+    sim->setupEnvironment();
+    
     while (globals.RUN){
         
         sim->eventHandler();                // Capture keypresses or mouse events             
@@ -38,6 +40,7 @@ int main(int argc, char *argv[]){
     if (globals.EVAL) {
         auto R = sim->metrics->computeResults();
         printResults(R);
+        sim->metrics->exportAllCSV("test");
     }
 
     delete sim;

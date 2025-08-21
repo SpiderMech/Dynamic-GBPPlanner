@@ -42,8 +42,8 @@ struct OBB2D {
         const double s = std::sin(orientation);
 
         // To comply with world coord-system, R^T is CCW-positive
-        Eigen::Vector2d axis1(c,  s);   // local X
-        Eigen::Vector2d axis2(-s, c);   // local Y
+        Eigen::Vector2d axis1(c,  -s);
+        Eigen::Vector2d axis2(s, c);
         return {axis1, axis2};
     }
 
@@ -110,6 +110,29 @@ namespace GeometryUtils {
         // Check if point is within the box bounds
         return (std::abs(rotated_point.x()) <= obb.halfExtents.x() &&
                 std::abs(rotated_point.y()) <= obb.halfExtents.y());
+    }
+
+    // Get closest point on an OBB and return point and distance
+    inline std::pair<Eigen::Vector2d, double> closestPointOnOBB(Eigen::Ref<const Eigen::Vector2d> p, const OBB2D& obb) { 
+        double cos_theta = std::cos(obb.orientation);
+        double sin_theta = std::sin(obb.orientation);
+        const Eigen::Vector2d ux(cos_theta, -sin_theta);
+        const Eigen::Vector2d uy(sin_theta,  cos_theta);
+        
+        Eigen::Vector2d local_pos = p - obb.center;
+        
+        Eigen::Vector2d rotated_pos;
+        rotated_pos.x() =  local_pos.dot(ux);
+        rotated_pos.y() =  local_pos.dot(uy);
+        
+        // Find the closest point on the OBB to the sphere center (in local coords)
+        Eigen::Vector2d closest;
+        closest.x() = std::clamp(rotated_pos.x(), -obb.halfExtents.x(), obb.halfExtents.x());
+        closest.y() = std::clamp(rotated_pos.y(), -obb.halfExtents.y(), obb.halfExtents.y());
+
+        const Eigen::Vector2d closest_world = obb.center + closest.x()*ux + closest.y()*uy;
+        Eigen::Vector2d diff = p - closest_world;
+        return {closest_world, diff.squaredNorm()};
     }
     
     // Check if there is overlap between a sphere and an OBB

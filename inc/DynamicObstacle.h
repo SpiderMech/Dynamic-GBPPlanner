@@ -32,6 +32,14 @@ struct MotionOptions
         geom_ = graphics_ptr->createCustomObstacleModel(mesh_file, default_angle_offset, color, use_bbox);
     }
 };
+/**************************************************************************************/
+// Result structure for closest point queries
+/**************************************************************************************/
+struct NeighbourHit {
+    Eigen::Vector2d pt_world;
+    double dist_squared;
+    const Eigen::Matrix2d* Sigma_pos;
+};
 
 /**************************************************************************************/
 // DynamicObstacle class that tracks the current position and handles future state projection
@@ -39,6 +47,31 @@ struct MotionOptions
 /**************************************************************************************/
 class DynamicObstacle
 {
+private:
+    Eigen::Matrix4d P_curr_ = Eigen::Matrix4d::Zero(); // State covariance at current tick (x, y, vx, vy)
+    std::map<int, Eigen::Matrix2d> pos_covariances_;   // Lookahead timestep position covariance (same index as states_)
+    double sigma_acc_ = 0.0001;                           // White-noise acceleration [m/s^2]
+
+    // Discrete constant-velocity model matrices
+    static Eigen::Matrix4d Fcv(double dt) {             
+        Eigen::Matrix4d F = Eigen::Matrix4d::Identity();
+        F(0, 2) = dt; F(1, 3) = dt; return F;
+    }
+    static Eigen::Matrix4d Qcv(double dt, double sigma_a) {
+        const double dt2 = dt*dt, dt3 = dt2 * dt, q = sigma_a*sigma_a;
+        Eigen::Matrix4d Q = Eigen::Matrix4d::Zero();
+        // x block
+        Q(0,0) = dt3/3.0*q; Q(0,2) = dt2/2.0*q; Q(2,0) = dt2/2.0*q; Q(2,2) = dt*q;
+        // y block
+        Q(1,1) = dt3/3.0*q; Q(1,3) = dt2/2.0*q; Q(3,1) = dt2/2.0*q; Q(3,3) = dt*q;
+        return Q;
+    }
+
+    // Updates P_curr_ by dt
+    void propagateCurrentCovariance(double dt);
+    // Roll Sigma_k for all lookahead timesteps to match `states_`
+    void rollCovariancesFromCurrent();
+
 public:
     DynamicObstacle(int oid,
                     std::deque<Eigen::VectorXd> waypoints,
@@ -67,12 +100,17 @@ public:
     // Compute the current local to world transformation matrix, with additional (optional) offset by delta_t
     std::pair<Eigen::Matrix3f, Eigen::VectorXd> getLocalToWorldTransform(const float delta_t) const;
 
-    // Returns a vector of k nearest neighbours to query_pt as vector of (point, squared_dist)
-    // Computation handled primarily by Geometry.getClosestPoints, this function mainly handles conversion between frames
-    std::vector<std::pair<Eigen::Vector2d, double>> getNearestPoints(const Eigen::Vector2d &query_pt, const int k = 5, const float delta_t = 0) const;
-
+    // Returns a vector of k nearest neighbour hits to query_pt as vector of NeighbourHits
+    std::vector<NeighbourHit> getNearestPointsFromKDTree(const Eigen::Vector2d &query_pt, const int k = 5, const float delta_t = 0) const;
+    
+    // A simplified version of getNearestPointsFromKDTree, uses OBB directly
+    std::vector<NeighbourHit> getNearestPoints2D(const Eigen::Vector2d& query_pt, const float delta_t = 0) const;
+    
     // Compute the next state vector based on given waypoints and starting state
     Eigen::VectorXd getNextState(Eigen::VectorXd state, float delta_t, std::deque<Eigen::VectorXd> &waypoints, float& pause_timer);
+    
+    // Sigma_k accessor, returns nullptr if unavailable
+    const Eigen::Matrix2d* getPosCovPtrAtDt(float delta_t) const;
 
     // Drawing function
     void draw();
@@ -83,8 +121,10 @@ public:
     // Junction waypoint generation functions
     static std::deque<Eigen::VectorXd> generateBusWaypoints(int road, int turn, int lane, 
                                                              double world_sz, double max_speed,
-                                                             double robot_radius);
+                                                             double lane_width);
     static std::deque<Eigen::VectorXd> generateVanWaypoints(int lane,
                                                              double world_sz, double max_speed, 
-                                                             double robot_radius);
+                                                             double lane_width);
+    static std::deque<Eigen::VectorXd> generatePedestrianWaypoints(double world_sz, double speed,
+                                                                   double lane_width);
 };

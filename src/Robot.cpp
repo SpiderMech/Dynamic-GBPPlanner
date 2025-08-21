@@ -21,6 +21,13 @@
 //      - Colour
 //      - Type, for id-ing the correct model type (see RobotType in Utils.h)
 /***************************************************************************/
+Eigen::Vector2d make_RA(Eigen::Ref<const Eigen::Vector2d> x0, Eigen::Ref<const Eigen::Vector2d> g, double d_max) {
+    Eigen::Vector2d dir = g - x0;
+    double L = dir.norm();
+    if (L < 1e-9) return x0;
+    return x0 + std::min(L, d_max) * (dir / L);
+}
+
 Robot::Robot(Simulator *sim, int rid,
              std::deque<Eigen::VectorXd> waypoints,
              RobotType type, float scale, float radius, Color color) 
@@ -77,11 +84,8 @@ Robot::Robot(Simulator *sim, int rid,
     auto &wp = waypoints_.front();
     // Create start state (5D=[x, y, xdot, ydot, theta], 4D=[x, y, xdot, ydot, theta])
     Eigen::VectorXd start(dofs_);
-
     if (dofs_ == 5) {
-        // Extract position and velocity, calculate initial orientation
-        // Warning: world is Y-down, so negate theta to store in Y-down convention
-        double initial_theta = 0.0;  // Default to facing east
+        double initial_theta = 0.0;
         // Only compute orientation from velocity if robot is moving
         if (std::abs(wp(2)) > 1e-6 || std::abs(wp(3)) > 1e-6) {
             initial_theta = -wrapAngle(std::atan2(wp(3), wp(2)));
@@ -118,24 +122,45 @@ Robot::Robot(Simulator *sim, int rid,
 
     // Initialise the horizon in the direction of the goal, at a distance T_HORIZON * MAX_SPEED from the start.
     Eigen::VectorXd horizon(dofs_);
+    // if (dofs_ == 5) {
+    //     // For 5D state, handle position/velocity and orientation separately
+    //     Eigen::Vector4d start_pv = start.head<4>();
+    //     Eigen::Vector4d goal_pv = goal.head<4>();
+    //     Eigen::Vector4d start2goal_pv = goal_pv - start_pv;
+    //     Eigen::Vector4d horizon_pv = start_pv + std::min(start2goal_pv.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal_pv.normalized();
+        
+    //     // Calculate horizon orientation from velocity direction
+    //     double horizon_theta = goal(4);  // Default to goal orientation
+    //     if (horizon_pv.segment<2>(2).norm() > 1e-6) {
+    //         horizon_theta = -wrapAngle(std::atan2(horizon_pv(2), horizon_pv(3)));  // Negate Y for our coordinate system
+    //     }
+        
+    //     horizon << horizon_pv, horizon_theta;
+    // } else {
+    //     // For 4D state (no orientation), use simplified logic
+    //     Eigen::VectorXd start2goal = goal - start;
+    //     horizon = start + std::min(start2goal.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal.normalized();
+    // }
+    const double d_max = globals.T_HORIZON * globals.MAX_SPEED;
+    const Eigen::Vector2d start_pos = start.head<2>();
+    const Eigen::Vector2d goal_pos = goal.head<2>();
+    const Eigen::Vector2d RA = make_RA(start_pos, goal_pos, d_max);
+    prev_RA_ = RA;
+
+    Eigen::Vector2d vel = RA - start_pos;
+    double L = vel.norm();
+    if (L > 1e-9) vel = (std::min(L, (double)globals.MAX_SPEED)) * (vel / L);
+    else vel.setZero();
+    
     if (dofs_ == 5) {
-        // For 5D state, handle position/velocity and orientation separately
-        Eigen::Vector4d start_pv = start.head<4>();
-        Eigen::Vector4d goal_pv = goal.head<4>();
-        Eigen::Vector4d start2goal_pv = goal_pv - start_pv;
-        Eigen::Vector4d horizon_pv = start_pv + std::min(start2goal_pv.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal_pv.normalized();
-        
-        // Calculate horizon orientation from velocity direction
-        double horizon_theta = goal(4);  // Default to goal orientation
-        if (horizon_pv.segment<2>(2).norm() > 1e-6) {
-            horizon_theta = -wrapAngle(std::atan2(horizon_pv(2), horizon_pv(3)));  // Negate Y for our coordinate system
-        }
-        
-        horizon << horizon_pv, horizon_theta;
+        double horizon_theta = start(4);
+        if (vel.norm() > 1e-6) horizon_theta = -wrapAngle(std::atan2(vel.y(), vel.x()));
+
+        horizon.resize(5);
+        horizon << RA.x(), RA.y(), vel.x(), vel.y(), horizon_theta;
     } else {
-        // For 4D state (no orientation), use simplified logic
-        Eigen::VectorXd start2goal = goal - start;
-        horizon = start + std::min(start2goal.norm(), double(globals.T_HORIZON * globals.MAX_SPEED)) * start2goal.normalized();
+        horizon.resize(4);
+        horizon << RA.x(), RA.y(), vel.x(), vel.y();
     }
 
     // Variables representing the planned path are at timesteps which increase in spacing.
@@ -293,26 +318,46 @@ void Robot::updateHorizon()
     task_active_ = false;
 
     auto horizon = getVar(-1);
-    // Prevent horizon from moving beyond a threshold, in case robot is stuck
-    float L = 0.f;
-    for (int i = 1; i < variables_.size(); ++i) {
-        auto v1_p = variables_[variable_keys_[i]]->mu_.head<2>(0);
-        auto v0_p = variables_[variable_keys_[i-1]]->mu_.head<2>(0);
-        L += (v1_p-v0_p).norm();
-    }
-
-    if (L <= globals.MAX_HORIZON_DIST && waypoints_.size() > 0)
+    
+    if (waypoints_.size() > 0)
     {
         auto &wp = waypoints_.front();
         // Check if next waypoint is a task
         next_wp_is_task_ = wp.size() >= 5 && wp(4) > 0.0;
 
-        // Horizon state moves towards the next waypoint.
-        // The Horizon state's velocity is capped at MAX_SPEED
-        Eigen::VectorXd dist_horz_to_goal = wp({0, 1}) - horizon->mu_({0, 1});
-        // This always moves robot with a new speed
-        Eigen::VectorXd new_vel = dist_horz_to_goal.normalized() * std::min((double)globals.MAX_SPEED, dist_horz_to_goal.norm());
-        Eigen::VectorXd new_pos = horizon->mu_({0, 1}) + new_vel * globals.TIMESTEP;
+        // // Horizon state moves towards the next waypoint.
+        // // The Horizon state's velocity is capped at MAX_SPEED
+        Eigen::VectorXd dist_horz_to_goal = wp.head<2>() - horizon->mu_.head<2>();
+        // // This always moves robot with a new speed
+        // Eigen::VectorXd new_vel = dist_horz_to_goal.normalized() * std::min((double)globals.MAX_SPEED, dist_horz_to_goal.norm());
+        // Eigen::VectorXd new_pos = horizon->mu_({0, 1}) + new_vel * globals.TIMESTEP;
+
+        // --- NEW ---
+        // Recompute a Reachable Anchor (RA) from the *current* robot position
+        // so the horizon cannot outrun what the robot can reach within T_HORIZON.
+        auto curr_var = getVar(0);
+        const Eigen::Vector2d x0 = curr_var->mu_.head<2>();
+        const Eigen::Vector2d g  = wp.head<2>();
+        const double d_max = globals.T_HORIZON * globals.MAX_SPEED;
+
+        const Eigen::Vector2d RA = make_RA(x0, g, d_max);
+        if (!std::isfinite(prev_RA_.x()) || !std::isfinite(prev_RA_.y())) prev_RA_ = RA;
+        
+        const double v_anchor = 0.8 * globals.MAX_SPEED; // anchor moves a bit slower than robot
+        const double cap = v_anchor * globals.TIMESTEP;
+        Eigen::Vector2d step = RA - prev_RA_;
+        double L = step.norm();
+        if (L > cap) prev_RA_ += (cap / L) * step; else prev_RA_ = RA;
+
+        // Move horizon toward (rate-limited) RA with capped velocity
+        Eigen::Vector2d to_anchor = prev_RA_ - horizon->mu_.head<2>();
+        Eigen::Vector2d new_vel = Eigen::Vector2d::Zero();
+        if (to_anchor.norm() > 1e-9) new_vel = (std::min((double)globals.MAX_SPEED, to_anchor.norm()/std::max((double)globals.TIMESTEP,1e-9))) * (to_anchor.normalized());
+        Eigen::Vector2d new_pos = horizon->mu_.head<2>() + new_vel * globals.TIMESTEP;
+
+        // Hard clamp: keep horizon inside the reachable disc from x0 (defensive)
+        Eigen::Vector2d x0_to_new = new_pos - x0;
+        if (x0_to_new.norm() > d_max) new_pos = x0 + (d_max / x0_to_new.norm()) * x0_to_new;
 
         Eigen::VectorXd new_mu(dofs_);
         if (dofs_ == 5) {
@@ -327,6 +372,7 @@ void Robot::updateHorizon()
             new_mu << new_pos, new_vel;
         }
         horizon->change_variable_prior(new_mu);
+        // --- NEW ---
 
         // If the horizon has reached the waypoint, handle task or normal waypoint
         if (dist_horz_to_goal.norm() < robot_radius_)

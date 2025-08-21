@@ -166,7 +166,7 @@ class DynamicObstacleFactor : public Factor
     float delta_t_;
     float robot_radius_;
     double safety_distance_;
-    std::vector<std::pair<Eigen::Vector2d, double>> neighbours_;
+    std::vector<NeighbourHit> neighbours_;
     
 public:
     std::shared_ptr<DynamicObstacle> obs_;

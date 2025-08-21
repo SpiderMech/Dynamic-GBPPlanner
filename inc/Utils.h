@@ -101,37 +101,21 @@ T random_choice_one(const std::vector<T>& v) {
 /***************************************************************************************************************/
 // POISSON SPAWNER
 /***************************************************************************************************************/
-// Example
-// int main() {
-//     double dt = 0.1; // timestep
-//     double t_end = 20.0;
-//     PoissonSpawner vans(0.5); // 0.5 per second
-//     vans.schedule_from(0.0);
-
-//     for (double t = 0; t < t_end; t += dt) {
-//         if (vans.try_spawn(t)) {
-//             std::cout << "Spawn at t=" << t << "\n";
-//         }
-//     }
-// }
 struct PoissonSpawner {
-    // double lambda; // rate per second
     double mean;
-    double hmin;    // headway mean
+    double hmin;
     double next_spawn;
-    std::mt19937_64 rng;
     std::exponential_distribution<double> exp;
     std::string name;
     bool dbg = false;
 
     PoissonSpawner(double M, double Hmin, const std::string& n = "", bool verbose = false)
-        : mean(M),
-          hmin(Hmin),
-          rng(globals.SEED),
-          exp(1.0 / (M - Hmin)),
-          next_spawn(0.0),
-          name(n),
-          dbg(verbose) {}
+        : mean(M), hmin(Hmin), exp(1.0 / std::max(1e-6, M - Hmin)), next_spawn(0.0), name(n), dbg(verbose) {}
+
+    void set_mean(double M) { mean = M; exp = std::exponential_distribution<double>(1.0 / std::max(1e-6, M - hmin)); }
+    void set_hmin(double H) { hmin = H; exp = std::exponential_distribution<double>(1.0 / std::max(1e-6, mean - H)); }
+    void set_rate(double lambda) { set_mean(1.0 / lambda); } // λ in spawns/s
+    double rate() const { return 1.0 / mean; }
 
     void schedule_from(double now) {
         next_spawn = now + hmin + exp(rng);

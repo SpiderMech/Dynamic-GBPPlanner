@@ -11,6 +11,7 @@
 #include <gbp/GBPCore.h>
 #include <gbp/Factor.h>
 #include <gbp/Factorgraph.h>
+#include <limits>
 
 extern Globals globals;
 
@@ -62,6 +63,9 @@ public:
     bool task_active_ = false;                  // Flag indicating if horizon has reached task waypoint
 
     double base_path_length_ = 0.0;             // Store minimal path length (sum of waypoint segment lengths)
+    Eigen::Vector2d prev_RA_ = Eigen::Vector2d(
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN());
 
 
     /****************************************/

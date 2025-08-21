@@ -23,6 +23,7 @@
 #include <KDTreeMapOfVectorsAdaptor.h>
 
 #include "cnpy/cnpy.h"
+#include "Spawn.hpp"
 
 class Robot;
 class DynamicObstacle;
@@ -78,15 +79,21 @@ public:
                                                                  // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
 
     MetricsCollector* metrics;                                   // Helper class to record metrics during evaluation
-    
-    std::vector<OBB2D> spawn_zones_;                             // Spawn zones where collisions are ignored for young entities
-    double spawn_zone_time_threshold_ = 2.0;                     // Time threshold in seconds for spawn zone grace period
+    std::vector<SpawnGate> spawn_gates_;                         // Vector of structures SpawnGate that helps prevent collision-spawning 
 
+    /*******************************************************************************/
+    // Set up environment related structures based on formation
+    /*******************************************************************************/
+    void setupEnvironment();
+
+    /*******************************************************************************/
+    // Admit spawn requests for robots and obstacles jointly
+    /*******************************************************************************/
+    void processSpawnRequests();
 
     /*******************************************************************************/
     // Create new robots if needed. Handles deletion of robots out of bounds. 
-    // New formations must modify the vectors "robots to create" and optionally "robots_to_delete"
-    // by appending (push_back()) a shared pointer to a Robot class.
+    // New formations must create spawn requests to spawn gates and optionally "robots_to_delete"
     /*******************************************************************************/    
     void createOrDeleteRobots();
 

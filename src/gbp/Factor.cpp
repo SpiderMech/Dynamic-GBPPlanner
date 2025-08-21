@@ -444,7 +444,7 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
         double max_ext2 = std::max(robot2_dimensions_(0), robot2_dimensions_(1));
         this->safety_distance_ = (max_ext1 + max_ext2) / 2.0 + 0.5;
     } else {
-        float eps = 0.2 * robot_radius;
+        float eps = 0.5 * robot_radius;
         this->safety_distance_ = 2 * robot_radius + eps;
     }
     this->delta_jac = 1e-3;
@@ -672,13 +672,36 @@ Eigen::MatrixXd ObstacleFactor::h_func_(const Eigen::VectorXd &X)
 /********************************************************************************************/
 // Factor for dynamic obstalces.
 /********************************************************************************************/
+// Helper functions for chance-constraint via inflated safety-margins
+double sigmaNominalSq() { /* Returns the nominal sigma from nominal gamma (globals.RBF_GAMMA) */
+    return 0.5 / std::max(1e-12, globals.RBF_GAMMA);
+}
+
+double projectedVariance(const Eigen::Matrix2d* Sigma_k, const Eigen::Vector2d& diff) { /* Project sigma at timestep k */
+    if (!Sigma_k) return 0.0;
+    double dn = diff.norm();
+    if (dn < 1e-9) {
+        // At the obstacle point → use average variance as a safe fallback
+        return 0.5 * Sigma_k->trace();
+    }
+    Eigen::Vector2d n = diff / dn;
+    return (n.transpose() * (*Sigma_k) * n)(0,0);
+}
+
+double gammaEff(const Eigen::Matrix2d* Sigma, const Eigen::Vector2d& diff) { /* Get the effective gamma for obstacle timestep k */
+    const double s_nom2 = sigmaNominalSq();
+    const double s_obs2 = projectedVariance(Sigma, diff);
+    const double s_eff2 = s_nom2 + s_obs2;
+    return 1.0 / (2.0 * std::max(1e-12, s_eff2));
+}
+
 DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                                              float sigma, const Eigen::VectorXd &measurement, float robot_radius, std::shared_ptr<DynamicObstacle> obs)
     : Factor{f_id, r_id, variables, sigma, measurement, n_dofs}, robot_radius_(robot_radius), obs_(std::move(obs))
 {
     factor_type_ = DYNAMIC_OBSTACLE_FACTOR;
     delta_t_ = variables.front()->ts_ * globals.T0;
-    double eps = 0.2f * robot_radius;
+    double eps = 0.2 * robot_radius;
     safety_distance_ = robot_radius_ + eps;
     this->delta_jac = 1e-5;
 }
@@ -686,38 +709,46 @@ DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std
 Eigen::MatrixXd DynamicObstacleFactor::h_func_(const Eigen::VectorXd &X)
 {
     Eigen::MatrixXd h = Eigen::MatrixXd::Zero(z_.rows(), z_.cols());
+    const Eigen::Vector2d x = X.segment<2>(0);
 
-    for (const auto &[pt_world, dist_squared] : neighbours_)
+    double acc = 0.0;
+    for (const auto &nb : neighbours_)
     {
-        double weight = gaussianRBF(dist_squared);
-        h(0) += weight;
+        const Eigen::Vector2d diff = x - nb.pt_world;
+        const double gamma = gammaEff(nb.Sigma_pos, diff);
+        const double w = std::exp(-gamma * nb.dist_squared);
+        acc += w;
     }
-    h(0) /= double(neighbours_.size());
+    h(0) = (neighbours_.empty() ? 0.0 : acc / double(neighbours_.size()));
     return h;
 }
 
 Eigen::MatrixXd DynamicObstacleFactor::J_func_(const Eigen::VectorXd &X)
 {
     Eigen::MatrixXd J = Eigen::MatrixXd::Zero(z_.rows(), X.size());
-    Eigen::Vector2d grad_obs{0., 0.};
-    for (const auto &[pt_world, dist_squared] : neighbours_)
+    const Eigen::Vector2d x = X.segment<2>(0);
+
+    Eigen::Vector2d grad_obs = Eigen::Vector2d::Zero();
+    for (const auto &nb : neighbours_)
     {
-        Eigen::Vector2d diff = X.segment<2>(0) - pt_world;
-        double weight = gaussianRBF(dist_squared);
-        grad_obs += -2.0 * globals.RBF_GAMMA * weight * diff;
+        const Eigen::Vector2d diff = x - nb.pt_world;
+        const double gamma = gammaEff(nb.Sigma_pos, diff);
+        const double w = std::exp(-gamma * nb.dist_squared);
+        grad_obs += -2.0 * gamma * w * diff;
     }
 
+    if (!neighbours_.empty()) grad_obs /= double(neighbours_.size());
     J(0, 0) = grad_obs.x();
     J(0, 1) = grad_obs.y();
-
-    J /= double(neighbours_.size());
     return J;
 }
 
 bool DynamicObstacleFactor::skip_factor()
 {
-    neighbours_ = obs_->getNearestPoints(Eigen::Vector2d{X_(0), X_(1)}, globals.NUM_NEIGHBOURS, delta_t_);
-    // this->skip_flag = neighbours_.front().second >= globals.OBSTALCE_SENSOR_RADIUS * globals.OBSTALCE_SENSOR_RADIUS;
+    Eigen::Vector2d x = X_.head<2>();
+    neighbours_ = obs_->getNearestPointsFromKDTree(x, globals.NUM_NEIGHBOURS, delta_t_);
+    // neighbours_ = obs_->getNearestPoints2D(x, delta_t_);
+    // this->skip_flag = neighbours_.front().dist_squared > (safety_distance_ * safety_distance_);
     this->skip_flag = false;
     return this->skip_flag;
 }
@@ -725,17 +756,19 @@ bool DynamicObstacleFactor::skip_factor()
 void DynamicObstacleFactor::draw()
 {
     auto v_0 = variables_[0];
-    double dist_sqr = neighbours_.front().second;
-    if (dist_sqr <= (safety_distance_ * safety_distance_))
+    NeighbourHit closestNb = neighbours_.front();
+    if (closestNb.dist_squared <= (safety_distance_ * safety_distance_))
     {
-        auto nb = neighbours_.front().first;
+        const Eigen::Vector2d nb_pos = closestNb.pt_world;
         auto state_t = obs_->states_.at(int(delta_t_/globals.T0));
-        DrawCylinderEx(Vector3{(float)v_0->mu_(0), globals.ROBOT_RADIUS, (float)v_0->mu_(1)},
-        Vector3{(float)nb(0), globals.ROBOT_RADIUS, (float)nb(1)},
-        0.1, 0.1, 4, RED);
         
+        // Draw line to closest neighbour
+        DrawCylinderEx(Vector3{(float)v_0->mu_(0), globals.ROBOT_RADIUS, (float)v_0->mu_(1)},
+                       Vector3{(float)nb_pos.x(), globals.ROBOT_RADIUS, (float)nb_pos.y()},
+                       0.1, 0.1, 4, RED);
+        
+        // Draw obstacle position at t
         float rotation = wrapAngle(state_t[4] + obs_->geom_->orientation_offset);
-        // Add the model's default offset (similar to robots)
         float rotation_degrees = rotation * (180.0f / M_PI);
         DrawModelEx(obs_->geom_->model,
             Vector3{(float)state_t[0], -obs_->geom_->boundingBox.min.y, (float)state_t[1]},
@@ -743,17 +776,23 @@ void DynamicObstacleFactor::draw()
             rotation_degrees,           // Rotation angle in degrees
             Vector3{1.0f, 1.0f, 1.0f},  // Scale
             ColorAlpha(DARKGREEN, 0.2f)
-        );               // Color tint
-            
+        );
+        
+        // Draw violating variable
         DrawSphere(Vector3{(float)v_0->mu_(0), robot_radius_, (float)v_0->mu_(1)}, 0.8 * robot_radius_, ColorAlpha(DARKGREEN, 0.2f));
+        
+        // Draw neighbours
         for (const auto& nb : neighbours_) {
-            auto nb_pos = nb.first;
-            DrawSphere(Vector3{(float)nb_pos(0), robot_radius_, (float)nb_pos(1)}, 0.2 * robot_radius_, ColorAlpha(DARKBLUE, 0.2f));
+            auto nb_pos = nb.pt_world;
+            DrawSphere(Vector3{(float)nb_pos.x(), robot_radius_, (float)nb_pos.y()}, 0.2 * robot_radius_, ColorAlpha(DARKBLUE, 0.2f));
         }
         if (!dbg)
         {
-            print(rotation_degrees);
+            // auto nbs1 = obs_->getNearestPointsFromKDTree(Eigen::Vector2d{X_(0), X_(1)}, globals.NUM_NEIGHBOURS, delta_t_);
+            // auto nbs2 = obs_->getNearestPoints2D(Eigen::Vector2d{X_(0), X_(1)}, delta_t_);
+            // print(nbs1.front().dist_squared, nbs2.front().dist_squared);
+            // print(nbs1.front().pt_world.transpose(), nbs2.front().pt_world.transpose());
             dbg = true;
         }
-        }
+    }
 }

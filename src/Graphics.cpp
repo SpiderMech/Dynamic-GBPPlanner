@@ -210,12 +210,18 @@ void Graphics::loadObstacleModels() {
     {
         std::vector<std::tuple<ObstacleType, std::string, double>> model_paths = {
             {ObstacleType::BUS, globals.ASSETS_DIR + "models/Bus.obj", 0.0},
-            {ObstacleType::VAN, globals.ASSETS_DIR + "models/Van.obj", 0.0}
+            {ObstacleType::VAN, globals.ASSETS_DIR + "models/Van.obj", 0.0},
+            {ObstacleType::PEDESTRIAN, globals.ASSETS_DIR + "models/Ped.obj", 0.0},
         };
 
         for (const auto& [type, model_path, of] : model_paths) {
             // Store in map
-            obstacleModels_[type] = createCustomObstacleModel(model_path.c_str(), of);
+            if (type == ObstacleType::PEDESTRIAN) {
+                obstacleModels_[type] = createBoxObstacleModel(1.f, 2.f, 1.f, 0.0);
+            } else {
+                obstacleModels_[type] = createCustomObstacleModel(model_path.c_str(), of);
+            }
+
         }
     }
 }

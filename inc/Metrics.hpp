@@ -1,4 +1,3 @@
-// metrics.hpp
 #pragma once
 #include <Eigen/Dense>
 #include <unordered_map>
@@ -9,6 +8,11 @@
 #include <numeric>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <chrono>
+#include <string>
 
 struct Sample
 {
@@ -120,11 +124,19 @@ class MetricsCollector
 private:
     std::unordered_map<int, RobotTrack> tracks_;
     mutable size_t total_collisions_ = 0;
-    FlowMeter flow_;
+    FlowMeter flow_in_ns_;
+    FlowMeter flow_out_ns_;
+    FlowMeter flow_in_we_;
+    FlowMeter flow_out_we_;
+    FlowMeter flow_in_sn_;
+    FlowMeter flow_out_sn_;
+    FlowMeter flow_in_ew_;
+    FlowMeter flow_out_ew_;
     bool flow_enabled_ = true;
 
 public:
-    explicit MetricsCollector(FlowMeter fm = {}) : flow_(fm) {}
+    explicit MetricsCollector(FlowMeter flow_in_ns = {}, FlowMeter flow_out_ns = {}, FlowMeter flow_in_we = {}, FlowMeter flow_out_we = {}, FlowMeter flow_in_sn = {}, FlowMeter flow_out_sn = {}, FlowMeter flow_in_ew = {}, FlowMeter flow_out_ew = {}) 
+    : flow_in_ns_(flow_in_ns), flow_out_ns_(flow_out_ns), flow_in_we_(flow_in_we), flow_out_we_(flow_out_we), flow_in_sn_(flow_in_sn), flow_out_sn_(flow_out_sn), flow_in_ew_(flow_in_ew), flow_out_ew_(flow_out_ew) {}
 
     // --- Sampling API ---
     void addSample(int robot_id, double t, Eigen::Ref<const Eigen::Vector2d> pos)
@@ -145,7 +157,19 @@ public:
             }
             // update flow using the last segment
             if (flow_enabled_)
-                flow_.accumulate(prev.t, prev.p, t, pos);
+            {
+                Eigen::Vector2d motion = pos - prev.p;
+                double abs_dx = std::abs(motion.x());
+                double abs_dy = std::abs(motion.y());
+
+                if (abs_dy > abs_dx) { // Vertical movement
+                    if (motion.y() > 0) flow_in_ns_.accumulate(prev.t, prev.p, t, pos); // Moving down
+                    else flow_out_sn_.accumulate(prev.t, prev.p, t, pos); // Moving up
+                } else { // Horizontal movement
+                    if (motion.x() > 0) flow_in_we_.accumulate(prev.t, prev.p, t, pos); // Moving right
+                    else flow_out_ew_.accumulate(prev.t, prev.p, t, pos); // Moving left
+                }
+            }
         }
         tr.samples.push_back({t, pos});
     }
@@ -264,7 +288,8 @@ public:
 
         // Scalars
         double normalized_collisions; // collided_robots / total_robots_spawned
-        double exit_flow_rate_per_s;  // crossings per second
+        double total_in_flow_rate_per_s;
+        double total_out_flow_rate_per_s;
         size_t robots_spawned = 0;
         size_t robots_arrived = 0;
         size_t robots_collided = 0;
@@ -322,8 +347,195 @@ public:
         R.total_collision_events = total_collisions_;
         R.normalized_collisions = (spawned > 0) ? static_cast<double>(collided) / static_cast<double>(spawned) : 0.0;
 
-        R.exit_flow_rate_per_s = flow_.ratePerSecond();
+        R.total_in_flow_rate_per_s = flow_in_ns_.ratePerSecond() + flow_in_we_.ratePerSecond() + flow_in_sn_.ratePerSecond() + flow_in_ew_.ratePerSecond();
+        R.total_out_flow_rate_per_s = flow_out_ns_.ratePerSecond() + flow_out_we_.ratePerSecond() + flow_out_sn_.ratePerSecond() + flow_out_ew_.ratePerSecond();
         return R;
+    }
+
+    // --- CSV Export Functions ---
+    
+    /**
+     * Generate a unique timestamp-based filename
+     */
+    static std::string generateTimestampedFilename(const std::string& prefix, const std::string& extension)
+    {
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+        
+        std::stringstream ss;
+        ss << prefix << "_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S") 
+           << "_" << std::setfill('0') << std::setw(3) << ms.count() << "." << extension;
+        return ss.str();
+    }
+
+    /**
+     * Export all individual samples to a CSV file
+     * Each row represents one sample from one robot at one time step
+     */
+    void exportSamplesToCSV(const std::string& experiment_name = "") const
+    {
+        // Create results directory if it doesn't exist
+        std::filesystem::create_directories("results");
+        
+        // Generate filename
+        std::string prefix = experiment_name.empty() ? "samples" : experiment_name + "_samples";
+        std::string filename = "results/" + generateTimestampedFilename(prefix, "csv");
+        
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
+            return;
+        }
+        
+        // Write CSV header
+        file << "robot_id,time_s,pos_x_m,pos_y_m,arrived,collided,sample_index\n";
+        
+        // Write data for each robot
+        for (const auto& [robot_id, track] : tracks_) {
+            for (size_t i = 0; i < track.samples.size(); ++i) {
+                const Sample& sample = track.samples[i];
+                file << robot_id << ","
+                     << std::fixed << std::setprecision(6) << sample.t << ","
+                     << std::fixed << std::setprecision(6) << sample.p.x() << ","
+                     << std::fixed << std::setprecision(6) << sample.p.y() << ","
+                     << (track.arrived ? 1 : 0) << ","
+                     << (track.collided ? 1 : 0) << ","
+                     << i << "\n";
+            }
+        }
+        
+        file.close();
+        std::cout << "Exported individual samples to: " << filename << std::endl;
+    }
+
+    /**
+     * Export summary statistics to a CSV file
+     * Each row represents one robot with aggregated metrics
+     */
+    void exportSummaryToCSV(const std::string& experiment_name = "") const
+    {
+        // Create results directory if it doesn't exist
+        std::filesystem::create_directories("results");
+        
+        // Generate filename
+        std::string prefix = experiment_name.empty() ? "summary" : experiment_name + "_summary";
+        std::string filename = "results/" + generateTimestampedFilename(prefix, "csv");
+        
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
+            return;
+        }
+        
+        // Write CSV header
+        file << "robot_id,arrived,collided,t_start_s,t_end_s,duration_s,"
+             << "path_length_m,baseline_path_length_m,detour_ratio,ldj,"
+             << "num_samples,has_finish_line,finish_line_p0_x,finish_line_p0_y,"
+             << "finish_line_p1_x,finish_line_p1_y\n";
+        
+        // Write data for each robot
+        for (const auto& [robot_id, track] : tracks_) {
+            if (track.samples.empty()) continue;
+            
+            // Calculate metrics for this robot
+            double path_length = pathLength(track.samples);
+            double ldj = logDimensionlessJerk(track.samples);
+            double duration = (std::isnan(track.t_end) ? track.samples.back().t : track.t_end) - track.t_start;
+            double detour_ratio = (track.baseline_path_length > 1e-6) ? 
+                                  path_length / track.baseline_path_length : 
+                                  std::numeric_limits<double>::quiet_NaN();
+            
+            file << robot_id << ","
+                 << (track.arrived ? 1 : 0) << ","
+                 << (track.collided ? 1 : 0) << ","
+                 << std::fixed << std::setprecision(6) << track.t_start << ","
+                 << std::fixed << std::setprecision(6) << (std::isnan(track.t_end) ? track.samples.back().t : track.t_end) << ","
+                 << std::fixed << std::setprecision(6) << duration << ","
+                 << std::fixed << std::setprecision(6) << path_length << ","
+                 << std::fixed << std::setprecision(6) << track.baseline_path_length << ","
+                 << std::fixed << std::setprecision(6) << detour_ratio << ","
+                 << std::fixed << std::setprecision(6) << ldj << ","
+                 << track.samples.size() << ","
+                 << (track.has_finish_line ? 1 : 0) << ","
+                 << std::fixed << std::setprecision(6) << track.finish_line_p0.x() << ","
+                 << std::fixed << std::setprecision(6) << track.finish_line_p0.y() << ","
+                 << std::fixed << std::setprecision(6) << track.finish_line_p1.x() << ","
+                 << std::fixed << std::setprecision(6) << track.finish_line_p1.y() << "\n";
+        }
+        
+        file.close();
+        std::cout << "Exported summary statistics to: " << filename << std::endl;
+    }
+
+    /**
+     * Export aggregate experiment-level metrics to CSV
+     * This creates a single row with overall experiment statistics
+     */
+    void exportExperimentMetricsToCSV(const std::string& experiment_name = "") const
+    {
+        // Create results directory if it doesn't exist
+        std::filesystem::create_directories("results");
+        
+        // Generate filename
+        std::string prefix = experiment_name.empty() ? "experiment" : experiment_name + "_experiment";
+        std::string filename = "results/" + generateTimestampedFilename(prefix, "csv");
+        
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
+            return;
+        }
+        
+        // Compute results
+        Results R = computeResults();
+        
+        // Write CSV header
+        file << "experiment_name,timestamp,robots_spawned,robots_arrived,robots_collided,"
+             << "total_collision_events,normalized_collisions,total_in_flow_rate_per_s,total_out_flow_rate_per_s,"
+             << "distance_median_m,distance_iqr_m,makespan_median_s,makespan_iqr_s,"
+             << "detour_ratio_median,detour_ratio_iqr,ldj_median,ldj_iqr\n";
+        
+        // Generate timestamp
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::stringstream timestamp_ss;
+        timestamp_ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+        
+        // Write data
+        file << (experiment_name.empty() ? "unnamed" : experiment_name) << ","
+             << timestamp_ss.str() << ","
+             << R.robots_spawned << ","
+             << R.robots_arrived << ","
+             << R.robots_collided << ","
+             << R.total_collision_events << ","
+             << std::fixed << std::setprecision(6) << R.normalized_collisions << ","
+             << std::fixed << std::setprecision(6) << R.total_in_flow_rate_per_s << ","
+             << std::fixed << std::setprecision(6) << R.total_out_flow_rate_per_s << ","
+             << std::fixed << std::setprecision(6) << R.distance_median_iqr.median << ","
+             << std::fixed << std::setprecision(6) << R.distance_median_iqr.iqr << ","
+             << std::fixed << std::setprecision(6) << R.makespan_median_iqr.median << ","
+             << std::fixed << std::setprecision(6) << R.makespan_median_iqr.iqr << ","
+             << std::fixed << std::setprecision(6) << R.detour_ratio_median_iqr.median << ","
+             << std::fixed << std::setprecision(6) << R.detour_ratio_median_iqr.iqr << ","
+             << std::fixed << std::setprecision(6) << R.ldj_median_iqr.median << ","
+             << std::fixed << std::setprecision(6) << R.ldj_median_iqr.iqr << "\n";
+        
+        file.close();
+        std::cout << "Exported experiment-level metrics to: " << filename << std::endl;
+    }
+
+    /**
+     * Convenience function to export all CSV files at once
+     */
+    void exportAllCSV(const std::string& experiment_name = "") const
+    {
+        std::cout << "\nExporting metrics to CSV files...\n";
+        exportSamplesToCSV(experiment_name);
+        exportSummaryToCSV(experiment_name);
+        exportExperimentMetricsToCSV(experiment_name);
+        std::cout << "CSV export completed.\n";
     }
 };
 
@@ -359,11 +571,16 @@ inline void printResults(const MetricsCollector::Results &R)
     // Flow Metrics
     std::cout << "FLOW METRICS:\n";
     std::cout << std::string(40, '-') << "\n";
-    std::cout << std::setw(25) << std::left << "  Exit Flow Rate:"
+    std::cout << std::setw(25) << std::left << "  Total In-Flow Rate:"
               << std::setw(10) << std::right << std::fixed << std::setprecision(2)
-              << R.exit_flow_rate_per_s << " /s";
+              << R.total_in_flow_rate_per_s << " /s";
     std::cout << " (" << std::fixed << std::setprecision(1)
-              << R.exit_flow_rate_per_s * 60.0 << " /min)\n\n";
+              << R.total_in_flow_rate_per_s * 60.0 << " /min)\n";
+    std::cout << std::setw(25) << std::left << "  Total Out-Flow Rate:"
+              << std::setw(10) << std::right << std::fixed << std::setprecision(2)
+              << R.total_out_flow_rate_per_s << " /s";
+    std::cout << " (" << std::fixed << std::setprecision(1)
+              << R.total_out_flow_rate_per_s * 60.0 << " /min)\n\n";
 
     // Path Metrics (with NaN handling)
     std::cout << "PATH METRICS:\n";

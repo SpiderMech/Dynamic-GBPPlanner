@@ -2,6 +2,7 @@
 #include <DynamicObstacle.h>
 #include <nanoflann.h>
 #include <Utils.h>
+#include <GeometryUtils.h>
 #include <Graphics.h> // For ObstacleModelInfo
 
 DynamicObstacle::DynamicObstacle(int oid,
@@ -40,6 +41,16 @@ DynamicObstacle::DynamicObstacle(int oid,
         // Note that wp_copy and pt_copy takes initial values from waypoints_ and pause_timer_, but are modified by getNextState
         states_[ts] = getNextState(states_[prev_ts], (ts - prev_ts) * globals.T0, wp_copy, pt_copy);
     }
+
+    // Initialise current covariance and roll forward
+    P_curr_.setZero();
+    const double s_pos0 = 0.002; // [m]
+    const double s_vel0 = 0.005; // [m/s]
+    const double sp2 = s_pos0 * s_pos0, sv2 = s_vel0*s_vel0;
+    P_curr_(0, 0) = sp2; P_curr_(1, 1) = sp2;
+    P_curr_(2, 2) = sv2; P_curr_(3, 3) = sv2;
+    
+    rollCovariancesFromCurrent();
 }
 
 /***************************************************************************************************/
@@ -62,6 +73,8 @@ void DynamicObstacle::updateObstacleState()
 
     state_ = states_[0] = getNextState(state_, globals.TIMESTEP, waypoints_, pause_timer_);
     orientation_ = state_[4];
+    propagateCurrentCovariance(globals.TIMESTEP); // Propage P by one tick
+
     auto wp_copy = waypoints_;
     auto pt_copy = pause_timer_;
     for (int i = 1; i < variable_timesteps_.size(); ++i)
@@ -69,8 +82,52 @@ void DynamicObstacle::updateObstacleState()
         int ts = variable_timesteps_[i], prev_ts = variable_timesteps_[i - 1];
         states_[ts] = getNextState(states_[prev_ts], (ts - prev_ts) * globals.T0, wp_copy, pt_copy);
     }
+    rollCovariancesFromCurrent();
 };
 
+/***************************************************************************************************/
+// Updates P_curr_ by dt
+/***************************************************************************************************/
+void DynamicObstacle::propagateCurrentCovariance(double dt) 
+{
+    const Eigen::Matrix4d F = Fcv(dt);
+    const Eigen::Matrix4d Q = Qcv(dt, sigma_acc_);
+    P_curr_ = F * P_curr_ * F.transpose() + Q;
+}
+
+/***************************************************************************************************/
+// Roll Sigma_k for all lookahead timesteps to match `states_`
+/***************************************************************************************************/
+void DynamicObstacle::rollCovariancesFromCurrent()
+{
+    pos_covariances_.clear();
+
+    Eigen::Matrix4d P = P_curr_;
+    pos_covariances_[0] = P.topLeftCorner<2,2>();
+
+    for (int i = 1; i < variable_timesteps_.size(); ++i) {
+        const int ts = variable_timesteps_[i];
+        const int prev_ts = variable_timesteps_[i-1];
+        const double dt = (ts - prev_ts) * globals.T0;
+
+        const Eigen::Matrix4d F = Fcv(dt);
+        const Eigen::Matrix4d Q = Qcv(dt, sigma_acc_);
+        P = F * P * F.transpose() + Q;
+
+        pos_covariances_[ts] = P.topLeftCorner<2,2>();
+    }
+}
+
+/***************************************************************************************************/
+// Sigma_k accessor, returns nullptr if unavailable
+/***************************************************************************************************/
+const Eigen::Matrix2d* DynamicObstacle::getPosCovPtrAtDt(float delta_t) const
+{
+    int ts = static_cast<int>(delta_t / globals.T0);
+    auto it = pos_covariances_.find(ts);
+    if (it == pos_covariances_.end()) return nullptr;
+    return &it->second;
+}
 /***************************************************************************************************/
 // Compute the current local to world transformation matrix, with additional (optional) offset by delta_t
 /***************************************************************************************************/
@@ -99,11 +156,9 @@ std::pair<Eigen::Matrix3f, Eigen::VectorXd> DynamicObstacle::getLocalToWorldTran
 }
 
 /***************************************************************************************************/
-// Returns a vector of k nearest neighbours to query_pt as a vector of (point, squared_dist)
-// Computation handled primarily by IGeometry.kNearesNeighbours in Graphics.h, this function
-// handles conversion between frames.
+// Returns a vector of k nearest neighbour hits to query_pt as vector of NeighbourHits
 /***************************************************************************************************/
-std::vector<std::pair<Eigen::Vector2d, double>> DynamicObstacle::getNearestPoints(const Eigen::Vector2d &query_pt, const int k, const float delta_t) const
+std::vector<NeighbourHit> DynamicObstacle::getNearestPointsFromKDTree(const Eigen::Vector2d &query_pt, const int k, const float delta_t) const
 {
     auto [tf, s] = getLocalToWorldTransform(delta_t);
     Eigen::Matrix3f inv_tf = tf.inverse();
@@ -113,7 +168,7 @@ std::vector<std::pair<Eigen::Vector2d, double>> DynamicObstacle::getNearestPoint
     Eigen::Vector3f local_h = inv_tf * world_pt;
     std::vector<std::pair<Eigen::Vector2d, double>> local_nearests = geom_->getNearestPoints(k, Eigen::Vector2d{local_h.x(), local_h.y()});
 
-    std::vector<std::pair<Eigen::Vector2d, double>> world_results;
+    std::vector<NeighbourHit> world_results;
     world_results.reserve(local_nearests.size());
 
     for (const auto &[pt_local, dist_sq_local] : local_nearests)
@@ -127,9 +182,35 @@ std::vector<std::pair<Eigen::Vector2d, double>> DynamicObstacle::getNearestPoint
         Eigen::Vector2d pt_world(pt_world_h.x(), pt_world_h.y());
         double dist_sq = (pt_world - query_pt).squaredNorm();
 
-        world_results.emplace_back(pt_world, dist_sq);
+        // Get Sigma_k
+        const Eigen::Matrix2d* Sig = getPosCovPtrAtDt(delta_t);
+        world_results.emplace_back( NeighbourHit{ pt_world, dist_sq, Sig } );
     }
     return world_results;
+}
+
+/***************************************************************************************************/
+// Returns a vector of k nearest neighbour hits to query_pt as vector of NeighbourHits
+/***************************************************************************************************/
+std::vector<NeighbourHit> DynamicObstacle::getNearestPoints2D(const Eigen::Vector2d& query_pt, const float delta_t) const 
+{
+    auto [tf, s] = getLocalToWorldTransform(delta_t);
+    const Eigen::Vector2d c(s[0], s[1]);
+    const float theta = s[4] + geom_->orientation_offset;
+    const Eigen::Vector2d obs_half_ext(0.5 * geom_->dimensions.x, 0.5 * geom_->dimensions.z);
+    const OBB2D obb(c, obs_half_ext, theta);
+
+    auto [q, d2] = GeometryUtils::closestPointOnOBB(query_pt, obb);
+    const Eigen::Matrix2d* Sig = getPosCovPtrAtDt(delta_t);
+
+    std::vector<NeighbourHit> hits;
+    hits.push_back({q, d2, Sig});
+
+    // (Optional) add 2-4 samples along the closest edge for smoother gradients:
+    // Determine which axis clamped (|lx|>ax or |ly|>ay) to pick edge direction,
+    // then push_back edge-midpoint(s) within ~safety distance.
+
+    return hits;
 }
 
 /***************************************************************************************************/
@@ -266,11 +347,10 @@ std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n)
 /***************************************************************************************************/
 std::deque<Eigen::VectorXd> DynamicObstacle::generateBusWaypoints(int road, int turn, int lane,
                                                                   double world_sz, double max_speed,
-                                                                  double robot_radius)
+                                                                  double lane_width)
 {
     // Constants
     const int n_lanes = 2;
-    const double lane_width = 4.0 * robot_radius;
 
     // Create rotation matrix for the road
     Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
@@ -341,9 +421,8 @@ std::deque<Eigen::VectorXd> DynamicObstacle::generateBusWaypoints(int road, int 
 /***************************************************************************************************/
 std::deque<Eigen::VectorXd> DynamicObstacle::generateVanWaypoints(int lane,
                                                                   double world_sz, double max_speed,
-                                                                  double robot_radius)
+                                                                  double lane_width)
 {
-    const double lane_width = 4.0 * robot_radius;
     double junction_edge = 2.0 * lane_width;
     double segment_length = world_sz / 2.0 - junction_edge;
     const int n_roads = 4, n_lanes = 2;
@@ -394,5 +473,49 @@ std::deque<Eigen::VectorXd> DynamicObstacle::generateVanWaypoints(int lane,
         if (!skip_second) delivery_points.push_back(temp_exits[i]);
     }
 
+    Eigen::VectorXd starting = Eigen::VectorXd{{-world_sz / 2.0 - 10.0, lane_v_offset, 1.0 * max_speed, 0.0, 0.0}};
+    delivery_points.push_front(starting);
     return delivery_points;
+}
+
+/***************************************************************************************************/
+// Generate waypoints for a single pedestrian crossing in junction_twoway formation
+/***************************************************************************************************/
+std::deque<Eigen::VectorXd> DynamicObstacle::generatePedestrianWaypoints(
+    double world_sz, double speed, double lane_width)
+{
+    // Simplified single pedestrian generation (not a horde)
+    const int n_lanes = 2;
+    const double road_half_width = n_lanes * lane_width;
+    const double spawn_offset = globals.ROBOT_RADIUS; // offset just outside the road edge
+    const double border = road_half_width + spawn_offset;
+    const double world_half = world_sz / 2.0;
+    
+    // Randomly choose crossing direction (horizontal vs vertical)
+    bool horizontal = random_int(0, 1) == 1;
+    // Randomly choose crossing side (1.0 or -1.0)
+    double side = (random_int(0, 1) == 1) ? 1.0 : -1.0;
+    // Random spawn position along the edge
+    double pos = (random_int(0, 1) == 0) ? random_float(-world_half, -road_half_width)
+                                         : random_float(road_half_width, world_half);
+    
+    std::deque<Eigen::VectorXd> waypoints;
+    Eigen::VectorXd start(5), end(5);
+    
+    if (horizontal) {
+        // Crossing a horizontal road: vary x position, spawn above or below
+        double z0 = side * border;
+        start << pos, z0, 0.0, -side * speed, 0.0; // 5th dimension (pause time) = 0
+        end << pos, -z0, 0.0, -side * speed, 0.0;  // 5th dimension (pause time) = 0
+    } else {
+        // Crossing a vertical road: vary z position, spawn left or right
+        double x0 = side * border;
+        start << x0, pos, -side * speed, 0.0, 0.0; // 5th dimension (pause time) = 0
+        end << -x0, pos, -side * speed, 0.0, 0.0;  // 5th dimension (pause time) = 0
+    }
+    
+    waypoints.push_back(start);
+    waypoints.push_back(end);
+    
+    return waypoints;
 }

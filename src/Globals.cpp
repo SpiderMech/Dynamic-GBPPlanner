@@ -17,6 +17,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     ASSETS_DIR = j["ASSETS_DIR"];
     N_DOFS = j.value("N_DOFS", 4);
     EVAL = static_cast<bool>((int)j.value("EVAL", 0));
+    VERBOSE = static_cast<bool>((int)j.value("VERBOSE", 0));
 
     // Display parameters
     DISPLAY = static_cast<bool>((int)j["DISPLAY"]);;

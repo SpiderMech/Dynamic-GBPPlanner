@@ -3,6 +3,7 @@
   "ASSETS_DIR": "../assets/",
   "N_DOFS": 4,
   "EVAL": 1,
+  "VERBOSE": 1,
   
   "#": "Display parameters",
   "DISPLAY": 1,
@@ -33,10 +34,10 @@
   
   "###": "GBP parameters",
   "SIGMA_FACTOR_DYNAMICS": 0.5,
-  "SIGMA_FACTOR_INTERROBOT": 0.01,
-  "SIGMA_FACTOR_OBSTACLE": 0.01,
-  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.01,
-  "NUM_ITERS": 8,
+  "SIGMA_FACTOR_INTERROBOT": 0.005,
+  "SIGMA_FACTOR_OBSTACLE": 0.005,
+  "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.005,
+  "NUM_ITERS": 10,
   "USE_DYNAMIC_OBS_FAC": 1,
   
   "####": "Dynamic obstacle parameters",
