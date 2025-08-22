@@ -343,7 +343,7 @@ void Robot::updateHorizon()
         const Eigen::Vector2d RA = make_RA(x0, g, d_max);
         if (!std::isfinite(prev_RA_.x()) || !std::isfinite(prev_RA_.y())) prev_RA_ = RA;
         
-        const double v_anchor = 0.8 * globals.MAX_SPEED; // anchor moves a bit slower than robot
+        const double v_anchor = 1.0 * globals.MAX_SPEED; // anchor moves a bit slower than robot
         const double cap = v_anchor * globals.TIMESTEP;
         Eigen::Vector2d step = RA - prev_RA_;
         double L = step.norm();
