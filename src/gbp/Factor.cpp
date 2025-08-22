@@ -471,8 +471,12 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
 
     // Use a center-to-center safety distance irrespective of DOFs.
     // This stabilizes GBP and avoids orientation-induced flips.
-    float eps = 0.5f * robot_radius;
-    this->safety_distance_ = 2 * robot_radius + eps; // ~= r1 + r2 + margin
+    if (n_dofs >= 5) {
+        this->safety_distance_ = 2.5;
+    } else {
+        float eps = 0.5f * robot_radius;
+        this->safety_distance_ = 2 * robot_radius + eps; // ~= r1 + r2 + margin
+    }
 
     // Analytical Jacobian is used (no orientation derivatives).
     this->delta_jac = 1e-4;
@@ -489,14 +493,14 @@ Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
     // State slices
     const Eigen::Vector2d c1 = X.segment<2>(0);
     const Eigen::Vector2d c2 = X.segment<2>(n0);
-    const double th1 = (n0 >= 5 ? X(4) : 0.0);
-    const double th2 = (n1 >= 5 ? X(n0 + 4) : 0.0);
+    const double th1 = (n0 >= 5 ? wrapAngle(X(4)) : 0.0);
+    const double th2 = (n1 >= 5 ? wrapAngle(X(n0 + 4)) : 0.0);
 
     // OBB half-extents and heading offsets (keep your flipped-axis convention)
     const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
     const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
-    const double o1 = th1 + robot1_angle_offset_;
-    const double o2 = th2 + robot2_angle_offset_;
+    const double o1 = wrapAngle(th1 + robot1_angle_offset_);
+    const double o2 = wrapAngle(th2 + robot2_angle_offset_);
 
     // Build OBBs
     OBB2D obb1(c1, e1, o1);
@@ -509,7 +513,7 @@ Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
 
     // Smooth |·| and smoothmax params
     const double eps_abs = 1e-6; // for |t|
-    const double beta = 10.0;    // softmax hardness
+    const double beta = 6.0;    // softmax hardness
     auto sabs = [&](double t)
     { return std::sqrt(t * t + eps_abs * eps_abs); };
 
@@ -567,14 +571,14 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     // State slices
     const Eigen::Vector2d c1 = X.segment<2>(0);
     const Eigen::Vector2d c2 = X.segment<2>(n0);
-    const double th1 = (n0 >= 5 ? X(4) : 0.0);
-    const double th2 = (n1 >= 5 ? X(n0 + 4) : 0.0);
+    const double th1 = (n0 >= 5 ? wrapAngle(X(4)) : 0.0);
+    const double th2 = (n1 >= 5 ? wrapAngle(X(n0 + 4)) : 0.0);
 
     // OBB params with your offsets
     const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
     const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
-    const double o1 = th1 + robot1_angle_offset_;
-    const double o2 = th2 + robot2_angle_offset_;
+    const double o1 = wrapAngle(th1 + robot1_angle_offset_);
+    const double o2 = wrapAngle(th2 + robot2_angle_offset_);
 
     OBB2D obb1(c1, e1, o1);
     OBB2D obb2(c2, e2, o2);
@@ -589,7 +593,7 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     // Smoothing constants
     const double eps_abs = 1e-6;
     const double eps_h = 1e-6;
-    const double beta = 10.0;
+    const double beta = 6.0;
 
     auto sabs = [&](double t)
     { return std::sqrt(t * t + eps_abs * eps_abs); };
@@ -675,7 +679,8 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
             // If n rotates (dn1!=0), additional terms from n in dot-products:
             const double ax1_n = a1x.dot(dn1);
             const double ay1_n = a1y.dot(dn1);
-            dE1_dth1 = e1.x() * sgn_ax1 * (dax1 + ax1_n) + e1.y() * sgn_ay1 * (day1 + ay1_n);
+            // dE1_dth1 = e1.x() * sgn_ax1 * (dax1 + ax1_n) + e1.y() * sgn_ay1 * (day1 + ay1_n);
+            dE1_dth1 = e1.x()*sgn_ax1 *dax1 + e1.y()*sgn_ay1*day1;
 
             // E2 depends on θ1 only via n (if n==a1x/a1y):
             const double sgn_ax2 = sgns(ax2);
@@ -687,7 +692,8 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
             // T term via n (only if n from box1): dT/dθ1 = dt * d·(dn1)
             const double dT_dth1 = dt * d.dot(dn1);
 
-            out.dth1 = dT_dth1 - (dE1_dth1 + dE2_dth1);
+            // out.dth1 = dT_dth1 - (dE1_dth1 + dE2_dth1);
+            out.dth1 =-dE1_dth1;
         }
 
         // Box2:
@@ -701,7 +707,8 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
             const double sgn_ay2 = sgns(ay2);
             const double ax2_n = a2x.dot(dn2);
             const double ay2_n = a2y.dot(dn2);
-            dE2_dth2 = e2.x() * sgn_ax2 * (dax2 + ax2_n) + e2.y() * sgn_ay2 * (day2 + ay2_n);
+            // dE2_dth2 = e2.x() * sgn_ax2 * (dax2 + ax2_n) + e2.y() * sgn_ay2 * (day2 + ay2_n);
+            dE2_dth2 = e2.x()*sgn_ax2*dax2 + e2.y()*sgn_ay2*day2;
 
             // E1 depends on θ2 only via n (if n==a2x/a2y):
             const double sgn_ax1 = sgns(ax1);
@@ -712,7 +719,8 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
 
             const double dT_dth2 = dt * d.dot(dn2);
 
-            out.dth2 = dT_dth2 - (dE1_dth2 + dE2_dth2);
+            // out.dth2 = dT_dth2 - (dE1_dth2 + dE2_dth2);
+            out.dth2 = -dE1_dth2;
         }
 
         return out;
@@ -754,8 +762,7 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     // → dr/dx = (1/d_safe) * ( (z/r) * (-dφ/dx) )
     // We also skip if φ > d_safe (factor inactive)
     // Recompute φ to get z (or reuse m,Z above)
-    const double phi =
-        m + std::log(std::max(Z, 1e-12)) / beta;
+    const double phi = m + std::log(std::max(Z, 1e-12)) / beta;
     if (phi > safety_distance_)
     {
         this->skip_flag = true;
@@ -767,18 +774,21 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     const double r = std::sqrt(z * z + eps_h * eps_h);
     const double inv_sd = 1.0 / std::max(1e-9, safety_distance_);
     const double scale = inv_sd * (z / std::max(r, 1e-12)) * (-1.0);
+    const double alpha = 10.0;
+    // double kth = 1.0 / (1.0 + std::exp(-alpha * z));
+    double kth = 1e-2;
 
     // Fill Jacobian (position + heading if present). Velocity columns remain 0.
     // Box 1: x,y,(vx,vy),theta
     J(0, 0) = scale * dphi_dc1.x();
     J(0, 1) = scale * dphi_dc1.y();
-    // if (n0 >= 5) J(0, 4) = scale * dphi_dth1;
+    // if (n0 >= 5) J(0, 4) = scale * dphi_dth1 * kth;
     if (n0 >= 5) J(0, 4) = 0.0;
 
     // Box 2 starts at column n0
     J(0, n0 + 0) = scale * dphi_dc2.x();
     J(0, n0 + 1) = scale * dphi_dc2.y();
-    // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2;
+    // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2 * kth;
     if (n1 >= 5) J(0, n0 + 4) = 0.0;
 
     return J;
@@ -818,10 +828,10 @@ void InterrobotFactor::draw()
         const Eigen::Vector2d c1 = X_.segment<2>(0);
         const Eigen::Vector2d c2 = X_.segment<2>(n0);
 
-        const double th1 = (n0 >= 5 ? X_(4) : 0.0);
-        const double th2 = (n1 >= 5 ? X_(n0 + 4) : 0.0);
-        const double o1 = th1 + robot1_angle_offset_;
-        const double o2 = th2 + robot2_angle_offset_;
+        const double th1 = (n0 >= 5 ? wrapAngle(X_(4)) : 0.0);
+        const double th2 = (n1 >= 5 ? wrapAngle(X_(n0 + 4)) : 0.0);
+        const double o1 = th1 + wrapAngle(robot1_angle_offset_);
+        const double o2 = th2 + wrapAngle(robot2_angle_offset_);
 
         auto h = this->h_func_(X_);
         auto J = this->J_func_(X_);

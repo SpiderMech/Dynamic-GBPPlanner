@@ -102,6 +102,9 @@ void Variable::update_belief()
                 mu_ = sigma_ * eta_;
         }
     }
+    if (n_dofs_ >= 5) {
+        mu_(4) = wrapAngle(mu_(4));
+    }
     belief_ = Message{eta_, lam_, mu_};
 
     // Create message to send to each factor that sent it stuff

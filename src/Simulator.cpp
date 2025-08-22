@@ -586,7 +586,7 @@ void Simulator::createOrDeleteRobots()
                 req.orientation = 0.0;
                 req.half_extents = Eigen::Vector2d::Constant(globals.ROBOT_RADIUS);
                 req.waypoints = waypoints;
-                req.robot_type = RobotType::SPHERE;
+                req.robot_type = RobotType::CAR;
                 req.robot_radius = globals.ROBOT_RADIUS;
                 req.robot_color = BLUE; // or hashed by road
         
