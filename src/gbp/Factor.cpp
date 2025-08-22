@@ -15,7 +15,8 @@
 #include <raylib.h>
 
 // Helper: smallest signed angle difference a-b in (-pi, pi]
-static inline double angle_diff(double a, double b) {
+static inline double angle_diff(double a, double b)
+{
     double d = a - b;
     return std::atan2(std::sin(d), std::cos(d));
 }
@@ -203,38 +204,44 @@ Message Factor::marginalise_factor_dist(const Eigen::VectorXd &eta, const Eigen:
     lam_ab << Lam(seqN(marg_idx, n_dofs), seq(0, marg_idx - 1)), Lam(seqN(marg_idx, n_dofs), seq(marg_idx + n_dofs, last));
     lam_ba << Lam(seq(0, marg_idx - 1), seq(marg_idx, marg_idx + n_dofs - 1)), Lam(seq(marg_idx + n_dofs, last), seqN(marg_idx, n_dofs));
     lam_bb << Lam(seq(0, marg_idx - 1), seq(0, marg_idx - 1)), Lam(seq(0, marg_idx - 1), seq(marg_idx + n_dofs, last)),
-              Lam(seq(marg_idx + n_dofs, last), seq(0, marg_idx - 1)), Lam(seq(marg_idx + n_dofs, last), seq(marg_idx + n_dofs, last));
+        Lam(seq(marg_idx + n_dofs, last), seq(0, marg_idx - 1)), Lam(seq(marg_idx + n_dofs, last), seq(marg_idx + n_dofs, last));
 
     // Use Cholesky decomposition for efficient matrix inversion
     Message marginalised_msg(n_dofs);
 
     llt_solver_.compute(lam_bb);
-    
-    if (llt_solver_.info() == Eigen::Success) {
+
+    if (llt_solver_.info() == Eigen::Success)
+    {
         // Successfully decomposed - solve efficiently
         Eigen::VectorXd solved_eta = llt_solver_.solve(eta_b);
         Eigen::MatrixXd solved_lam = llt_solver_.solve(lam_ba);
-        
+
         marginalised_msg.eta = eta_a - lam_ab * solved_eta;
         marginalised_msg.lambda = lam_aa - lam_ab * solved_lam;
-    } else {
+    }
+    else
+    {
         // Fallback to LDLT for indefinite matrices
         ldlt_solver_.compute(lam_bb);
-        
-        if (ldlt_solver_.info() == Eigen::Success && ldlt_solver_.isPositive()) {
+
+        if (ldlt_solver_.info() == Eigen::Success && ldlt_solver_.isPositive())
+        {
             Eigen::VectorXd solved_eta = ldlt_solver_.solve(eta_b);
             Eigen::MatrixXd solved_lam = ldlt_solver_.solve(lam_ba);
-            
+
             marginalised_msg.eta = eta_a - lam_ab * solved_eta;
             marginalised_msg.lambda = lam_aa - lam_ab * solved_lam;
-        } else {
+        }
+        else
+        {
             // Final fallback to direct inverse for problematic cases
             Eigen::MatrixXd lam_bb_inv = lam_bb.inverse();
             marginalised_msg.eta = eta_a - lam_ab * lam_bb_inv * eta_b;
             marginalised_msg.lambda = lam_aa - lam_ab * lam_bb_inv * lam_ba;
         }
     }
-    
+
     if (!marginalised_msg.lambda.allFinite())
         marginalised_msg.setZero();
 
@@ -256,97 +263,106 @@ DynamicsFactor::DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<V
     : Factor{f_id, r_id, variables, sigma, measurement, n_dofs}, dt_(dt)
 {
     factor_type_ = DYNAMICS_FACTOR;
-    
+
     // For 5D state: [x, y, xdot, ydot, theta]
     // With instantaneous alignment model
-    if (n_dofs_ == 5) {
+    if (n_dofs_ == 5)
+    {
         Eigen::MatrixXd I = Eigen::MatrixXd::Identity(2, 2);
         Eigen::MatrixXd Qc_inv = pow(sigma, -2.) * I;
-        
+
         // Build the full 5x5 precision matrix
         Eigen::MatrixXd Qi_inv = Eigen::MatrixXd::Zero(5, 5);
         // Position and velocity components (same as 4D case)
-        Qi_inv.block<2,2>(0, 0) = 12. * pow(dt_, -3.) * Qc_inv;
-        Qi_inv.block<2,2>(0, 2) = -6. * pow(dt_, -2.) * Qc_inv;
-        Qi_inv.block<2,2>(2, 0) = -6. * pow(dt_, -2.) * Qc_inv;
-        Qi_inv.block<2,2>(2, 2) = 4. / dt_ * Qc_inv;
-        
+        Qi_inv.block<2, 2>(0, 0) = 12. * pow(dt_, -3.) * Qc_inv;
+        Qi_inv.block<2, 2>(0, 2) = -6. * pow(dt_, -2.) * Qc_inv;
+        Qi_inv.block<2, 2>(2, 0) = -6. * pow(dt_, -2.) * Qc_inv;
+        Qi_inv.block<2, 2>(2, 2) = 4. / dt_ * Qc_inv;
+
         // Orientation component - much looser constraint to prevent fighting with velocity
         // The orientation should follow velocity naturally, not be forced
-        double sigma_theta = sigma * 10.0;  // Much looser constraint
+        double sigma_theta = sigma * 10.0; // Much looser constraint
         double Qc_inv_theta = pow(sigma_theta, -2.);
-        Qi_inv(4, 4) = 1. / dt_ * Qc_inv_theta;  // Reduced weight
-        
+        Qi_inv(4, 4) = 1. / dt_ * Qc_inv_theta; // Reduced weight
+
         this->meas_model_lambda_ = Qi_inv;
-        
+
         // For instantaneous alignment, orientation is nonlinear
         this->linear_ = false;
-    
-    // For 4D state: [x, y, xdot, ydot]
-    } else {
+
+        // For 4D state: [x, y, xdot, ydot]
+    }
+    else
+    {
         Eigen::MatrixXd I = Eigen::MatrixXd::Identity(2, 2);
         Eigen::MatrixXd O = Eigen::MatrixXd::Zero(2, 2);
         Eigen::MatrixXd Qc_inv = pow(sigma, -2.) * I;
 
         Eigen::MatrixXd Qi_inv(n_dofs_, n_dofs_);
         Qi_inv << 12. * pow(dt_, -3.) * Qc_inv, -6. * pow(dt_, -2.) * Qc_inv,
-                  -6. * pow(dt_, -2.) * Qc_inv, 4. / dt_ * Qc_inv;
+            -6. * pow(dt_, -2.) * Qc_inv, 4. / dt_ * Qc_inv;
 
         this->meas_model_lambda_ = Qi_inv;
-        
+
         // Store Jacobian as it is linear for 4D
         this->linear_ = true;
         J_ = Eigen::MatrixXd::Zero(n_dofs_, n_dofs_ * 2);
         J_ << I, dt * I, -1 * I, O,
-              O, I, O, -1 * I;
+            O, I, O, -1 * I;
     }
 }
 
 Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
 {
-    if (n_dofs_ == 5) {
+    if (n_dofs_ == 5)
+    {
         // X contains [x1, y1, xdot1, ydot1, theta1, x2, y2, xdot2, ydot2, theta2]
         Eigen::VectorXd h = Eigen::VectorXd::Zero(5);
-        
+
         // Position constraint: x2 = x1 + xdot1 * dt, use predicted - actual for consistency
-        h(0) = X(0) + X(2)*dt_ - X(5);
-        h(1) = X(1) + X(3)*dt_ - X(6);
-        
+        h(0) = X(0) + X(2) * dt_ - X(5);
+        h(1) = X(1) + X(3) * dt_ - X(6);
+
         // Velocity constraint: xdot2 = xdot1 (constant velocity)
         h(2) = X(2) - X(7);
         h(3) = X(3) - X(8);
-        
+
         // Orientation constraint: theta should align with velocity direction
         double xdot2 = X(7), ydot2 = X(8);
-        double v2 = xdot2*xdot2 + ydot2*ydot2;
+        double v2 = xdot2 * xdot2 + ydot2 * ydot2;
         double v_mag = std::sqrt(v2);
-        
+
         // Only apply orientation constraint when moving at reasonable speed
         // This prevents oscillations at low speeds
-        double v_min = v0_ * 0.1;  // Minimum velocity to apply constraint
-        
+        double v_min = v0_ * 0.1; // Minimum velocity to apply constraint
+
         double theta_diff = 0.0;
-        if (std::isfinite(X(9)) && v_mag > v_min) {
+        if (std::isfinite(X(9)) && v_mag > v_min)
+        {
             // theta should align with velocity direction
             // Since Y is down, we need to negate it for proper angle calculation
             double theta_vel = -wrapAngle(std::atan2(ydot2, xdot2));
             // Use angle_diff for consistent angle wrapping
             theta_diff = angle_diff(theta_vel, X(9));
-            
+
             // Apply smooth transition based on velocity magnitude
             // Use tanh for smoother, bounded transition than sigmoid
-            double k = 3.0 / v0_;  // Transition rate
+            double k = 3.0 / v0_; // Transition rate
             double w = 0.5 * (1.0 + std::tanh(k * (v_mag - v0_ * 0.3)));
-            
+
             // Scale the error by the weight
             h(4) = w * theta_diff;
-        } else {
+        }
+        else
+        {
             // At low speeds, don't constrain orientation
             h(4) = 0.0;
         }
-    
+
         return h;
-    } else {
+    }
+    else
+    {
         // Original 4D implementation
         return J_ * X;
     }
@@ -354,47 +370,58 @@ Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
 
 Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
 {
-    if (n_dofs_ == 5) {
+    if (n_dofs_ == 5)
+    {
         // 5D state Jacobian with instantaneous alignment
         Eigen::MatrixXd J = Eigen::MatrixXd::Zero(5, 10);
-        
+
         // Position and velocity constraints Jacobian - same as 4D case
-        J(0, 0) = 1;  J(0, 2) = dt_;  J(0, 5) = -1;  // dx
-        J(1, 1) = 1;  J(1, 3) = dt_;  J(1, 6) = -1;  // dy
-        J(2, 2) = 1;  J(2, 7) = -1;  // dxdot
-        J(3, 3) = 1;  J(3, 8) = -1;  // dydot
-        
+        J(0, 0) = 1;
+        J(0, 2) = dt_;
+        J(0, 5) = -1; // dx
+        J(1, 1) = 1;
+        J(1, 3) = dt_;
+        J(1, 6) = -1; // dy
+        J(2, 2) = 1;
+        J(2, 7) = -1; // dxdot
+        J(3, 3) = 1;
+        J(3, 8) = -1; // dydot
+
         // Orientation constraint Jacobian (nonlinear due to atan2)
         double xdot2 = X(7), ydot2 = X(8);
-        double v2 = xdot2*xdot2 + ydot2*ydot2;
+        double v2 = xdot2 * xdot2 + ydot2 * ydot2;
         double v_mag = std::sqrt(v2);
-        
+
         // Minimum velocity threshold
         double v_min = v0_ * 0.1;
-        
-        if (v_mag > v_min) {
+
+        if (v_mag > v_min)
+        {
             // Compute weight using tanh for smooth transition
             double k = 3.0 / v0_;
             double tanh_arg = k * (v_mag - v0_ * 0.3);
             double tanh_val = std::tanh(tanh_arg);
             double w = 0.5 * (1.0 + tanh_val);
-            
+
             // d theta_vel / d xdot2, d ydot2 with stronger regularization
             double v2_reg = v2 + v_min * v_min;
-            double dthetad_x =  ydot2 / v2_reg;
+            double dthetad_x = ydot2 / v2_reg;
             double dthetad_y = -xdot2 / v2_reg;
-            
+
             // Product-rule term discarded
-            J(4, 7) = w * dthetad_x;  // wrt xdot2
-            J(4, 8) = w * dthetad_y;  // wrt ydot2
-            J(4, 9) = -w;  // wrt theta2
-            
-        } else {
+            J(4, 7) = w * dthetad_x; // wrt xdot2
+            J(4, 8) = w * dthetad_y; // wrt ydot2
+            J(4, 9) = -w;            // wrt theta2
+        }
+        else
+        {
             // Below minimum velocity, no constraint
             J.row(4).setZero();
         }
         return J;
-    } else {
+    }
+    else
+    {
         // Original 4D implementation
         return J_;
     }
@@ -402,7 +429,8 @@ Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
 
 void DynamicsFactor::draw()
 {
-    if (!globals.DRAW_PATH) {
+    if (!globals.DRAW_PATH)
+    {
         auto variables = this->variables_;
         Eigen::VectorXd p0 = variables[0]->mu_, p1 = variables[1]->mu_;
         DrawCylinderEx(Vector3{(float)p0(0), globals.ROBOT_RADIUS, (float)p0(1)}, Vector3{(float)p1(0), globals.ROBOT_RADIUS, (float)p1(1)}, 0.1, 0.1, 4, BLACK);
@@ -419,8 +447,8 @@ void DynamicsFactor::draw()
 InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                                    float sigma, const Eigen::VectorXd &measurement,
                                    float robot_radius,
-                                   const Eigen::Vector2d& robot1_dims,
-                                   const Eigen::Vector2d& robot2_dims,
+                                   const Eigen::Vector2d &robot1_dims,
+                                   const Eigen::Vector2d &robot2_dims,
                                    double robot1_angle_offset,
                                    double robot2_angle_offset)
     : Factor{f_id, r_id, variables, sigma, measurement, n_dofs},
@@ -430,97 +458,347 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
       robot2_angle_offset_(robot2_angle_offset)
 {
     factor_type_ = INTERROBOT_FACTOR;
-    
-    // If dimensions not provided, use sphere approximation
-    if (robot1_dimensions_.isZero()) {
+
+    // If dimensions not provided, use sphere approximation for debug/drawing only
+    if (robot1_dimensions_.isZero())
+    {
         robot1_dimensions_ = Eigen::Vector2d(2 * robot_radius, 2 * robot_radius);
     }
-    if (robot2_dimensions_.isZero()) {
+    if (robot2_dimensions_.isZero())
+    {
         robot2_dimensions_ = Eigen::Vector2d(2 * robot_radius, 2 * robot_radius);
     }
-    
-    if (n_dofs == 5) {
-        double max_ext1 = std::max(robot1_dimensions_(0), robot1_dimensions_(1));
-        double max_ext2 = std::max(robot2_dimensions_(0), robot2_dimensions_(1));
-        this->safety_distance_ = (max_ext1 + max_ext2) / 2.0 + 0.5;
-    } else {
-        float eps = 0.5 * robot_radius;
-        this->safety_distance_ = 2 * robot_radius + eps;
-    }
-    this->delta_jac = 1e-3;
+
+    // Use a center-to-center safety distance irrespective of DOFs.
+    // This stabilizes GBP and avoids orientation-induced flips.
+    float eps = 0.5f * robot_radius;
+    this->safety_distance_ = 2 * robot_radius + eps; // ~= r1 + r2 + margin
+
+    // Analytical Jacobian is used (no orientation derivatives).
+    this->delta_jac = 1e-4;
 }
 
 Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
 {
-    Eigen::MatrixXd h = Eigen::MatrixXd::Zero(z_.rows(), z_.cols());
+    // 1 scalar residual
+    Eigen::MatrixXd h(1, 1);
 
-    // For 5D state: [x, y, xdot, ydot, theta]
-    if (n_dofs_ == 5) {
-        Eigen::Vector2d X_diff = X(seqN(0, 2)) - X(seqN(5, 2));
-        X_diff += 1e-6 * r_id_ * Eigen::Vector2d::Ones();
+    const int n0 = variables_[0]->n_dofs_;
+    const int n1 = variables_[1]->n_dofs_;
 
-        double r = X_diff.norm();
-        if (r <= safety_distance_)
-        {
-            this->skip_flag = false;
-            h(0) = 1.f * (1 - r / safety_distance_);
-        }
-        else
-        {
-            this->skip_flag = true;
-        }
-    } else {
-        // Original 4D implementation (sphere approximation)
-        Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
-        X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2);
+    // State slices
+    const Eigen::Vector2d c1 = X.segment<2>(0);
+    const Eigen::Vector2d c2 = X.segment<2>(n0);
+    const double th1 = (n0 >= 5 ? X(4) : 0.0);
+    const double th2 = (n1 >= 5 ? X(n0 + 4) : 0.0);
 
-        double r = X_diff.norm();
-        if (r <= safety_distance_)
-        {
-            this->skip_flag = false;
-            h(0) = 1.f * (1 - r / safety_distance_);
-        }
-        else
-        {
-            this->skip_flag = true;
-        }
-    }
+    // OBB half-extents and heading offsets (keep your flipped-axis convention)
+    const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
+    const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
+    const double o1 = th1 + robot1_angle_offset_;
+    const double o2 = th2 + robot2_angle_offset_;
+
+    // Build OBBs
+    OBB2D obb1(c1, e1, o1);
+    OBB2D obb2(c2, e2, o2);
+
+    const auto axes1 = obb1.getAxes();
+    const auto axes2 = obb2.getAxes();
+    const Eigen::Vector2d a1x = axes1.first,  a1y = axes1.second;
+    const Eigen::Vector2d a2x = axes2.first,  a2y = axes2.second;
+
+    // Smooth |·| and smoothmax params
+    const double eps_abs = 1e-6; // for |t|
+    const double beta = 10.0;    // softmax hardness
+    auto sabs = [&](double t)
+    { return std::sqrt(t * t + eps_abs * eps_abs); };
+
+    // Signed separation along axis n: s(n) = |(c2 - c1)·n| - (E1(n) + E2(n))
+    auto extent = [&](const Eigen::Vector2d &n,
+                      const Eigen::Vector2d &ax, const Eigen::Vector2d &ay,
+                      const Eigen::Vector2d &e) -> double
+    {
+        return e.x() * sabs(ax.dot(n)) + e.y() * sabs(ay.dot(n));
+    };
+
+    auto sep_along = [&](const Eigen::Vector2d &n) -> double
+    {
+        const Eigen::Vector2d d = c2 - c1;
+        const double T = sabs(d.dot(n));
+        const double E1 = extent(n, a1x, a1y, e1);
+        const double E2 = extent(n, a2x, a2y, e2);
+        return T - (E1 + E2);
+    };
+
+    // Evaluate gaps on the 4 axes
+    double g[4];
+    g[0] = sep_along(a1x);
+    g[1] = sep_along(a1y);
+    g[2] = sep_along(a2x);
+    g[3] = sep_along(a2y);
+
+    // Smoothmax across the 4 gaps → smooth “best” signed separation
+    double m = std::max(std::max(g[0], g[1]), std::max(g[2], g[3]));
+    double Z = 0.0;
+    for (int k = 0; k < 4; ++k)
+        Z += std::exp(beta * (g[k] - m));
+    const double phi = m + std::log(std::max(Z, 1e-12)) / beta;
+
+    // Smooth hinge residual on (d_safe - phi)
+    const double z = safety_distance_ - phi; // >0 ⇒ violation
+    const double eps_h = 1e-6;
+    const double r = std::sqrt(z * z + eps_h * eps_h);
+
+    // Deactivate (skip/zero) far-away pairs
+    this->skip_flag = (phi > safety_distance_);
+
+    // Output residual, normalised by d_safe to keep scale ~O(1)
+    h(0, 0) = (this->skip_flag ? 0.0 : r / std::max(1e-9, safety_distance_));
     return h;
 }
 
 Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
 {
-    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(z_.rows(), n_dofs_ * 2);
-    if (n_dofs_ == 5) {
-        Eigen::Vector2d X_diff = X(seqN(0, 2)) - X(seqN(5, 2));
-        X_diff += 1e-6 * r_id_ * Eigen::Vector2d::Ones();
-        double r = X_diff.norm();
-        if (r <= safety_distance_) {
-            J(0, seqN(0, 2)) = -1.f / safety_distance_ / r * X_diff;
-            J(0, seqN(5, 2)) = 1.f / safety_distance_ / r * X_diff;
-        }
-    } else {
-        // Original 4D implementation
-        Eigen::VectorXd X_diff = X(seqN(0, n_dofs_ / 2)) - X(seqN(n_dofs_, n_dofs_ / 2));
-        X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2); // Add a tiny random offset to avoid div/0 errors
-        double r = X_diff.norm();
-        if (r <= safety_distance_)
+    const int n0 = variables_[0]->n_dofs_;
+    const int n1 = variables_[1]->n_dofs_;
+
+    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(1, n0 + n1);
+
+    // State slices
+    const Eigen::Vector2d c1 = X.segment<2>(0);
+    const Eigen::Vector2d c2 = X.segment<2>(n0);
+    const double th1 = (n0 >= 5 ? X(4) : 0.0);
+    const double th2 = (n1 >= 5 ? X(n0 + 4) : 0.0);
+
+    // OBB params with your offsets
+    const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
+    const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
+    const double o1 = th1 + robot1_angle_offset_;
+    const double o2 = th2 + robot2_angle_offset_;
+
+    OBB2D obb1(c1, e1, o1);
+    OBB2D obb2(c2, e2, o2);
+
+    const auto axes1 = obb1.getAxes();
+    const auto axes2 = obb2.getAxes();
+    const Eigen::Vector2d a1x = axes1.first,  a1y = axes1.second;
+    const Eigen::Vector2d a2x = axes2.first,  a2y = axes2.second;
+
+    const Eigen::Vector2d d = c2 - c1;
+
+    // Smoothing constants
+    const double eps_abs = 1e-6;
+    const double eps_h = 1e-6;
+    const double beta = 10.0;
+
+    auto sabs = [&](double t)
+    { return std::sqrt(t * t + eps_abs * eps_abs); };
+    auto sgns = [&](double t)
+    { return t / std::sqrt(t * t + eps_abs * eps_abs); }; // d/dt |t|
+
+    // Axis derivative helpers: for your getAxes(), d/dθ of the two axes is:
+    // ∂a_x/∂θ = +a_y,   ∂a_y/∂θ = -a_x
+    auto dn_dth_box1 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
+    {
+        // if n==a1x → -a1y; if n==a1y → a1x; else 0
+        if ((n - a1x).squaredNorm() < 1e-18) return -a1y;
+        if ((n - a1y).squaredNorm() < 1e-18) return  a1x;
+        return Eigen::Vector2d::Zero();
+    };
+    auto dn_dth_box2 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
+    {
+        // if n==a2x → -a2y; if n==a2y → a2x; else 0
+        if ((n - a2x).squaredNorm() < 1e-18) return -a2y;
+        if ((n - a2y).squaredNorm() < 1e-18) return  a2x;
+        return Eigen::Vector2d::Zero();
+    };
+
+    // E(ax, ay, e; n) = e.x*|ax·n| + e.y*|ay·n|
+    auto extent = [&](const Eigen::Vector2d &n,
+                      const Eigen::Vector2d &ax, const Eigen::Vector2d &ay,
+                      const Eigen::Vector2d &e) -> double
+    {
+        return e.x() * sabs(ax.dot(n)) + e.y() * sabs(ay.dot(n));
+    };
+
+    // s(n) = |d·n| - (E1(n)+E2(n))
+    struct SGrad
+    {
+        double s;
+        Eigen::RowVector2d dc1;
+        Eigen::RowVector2d dc2;
+        double dth1;
+        double dth2;
+    };
+
+    auto dsep = [&](const Eigen::Vector2d &n) -> SGrad
+    {
+        SGrad out;
+        out.s = 0.0;
+        out.dc1.setZero();
+        out.dc2.setZero();
+        out.dth1 = 0.0;
+        out.dth2 = 0.0;
+
+        // Scalar parts
+        const double t = d.dot(n);
+        const double T = sabs(t);
+        const double dt = sgns(t); // dT/dt
+
+        // Extents
+        const double ax1 = a1x.dot(n), ay1 = a1y.dot(n);
+        const double ax2 = a2x.dot(n), ay2 = a2y.dot(n);
+        const double E1 = e1.x() * sabs(ax1) + e1.y() * sabs(ay1);
+        const double E2 = e2.x() * sabs(ax2) + e2.y() * sabs(ay2);
+
+        out.s = T - (E1 + E2);
+
+        // Position grads (treat n as fixed for pos — standard SAT linearization)
+        // dT/dc1 = dT/dt * d·n/dc1 = dt * (-n),   dT/dc2 = dt * (+n)
+        out.dc1 = (-dt) * n.transpose();
+        out.dc2 = (+dt) * n.transpose();
+
+        // Heading grads: two effects:
+        // (i) when n comes from that box, n rotates: dT/dθ = dt * d·(dn/dθ)
+        // (ii) E-terms change via d(ax·n)/dθ and d(ay·n)/dθ
+        // Box1:
         {
-            J(0, seqN(0, n_dofs_ / 2)) = -1.f / safety_distance_ / r * X_diff;
-            J(0, seqN(n_dofs_, n_dofs_ / 2)) = 1.f / safety_distance_ / r * X_diff;
+            const Eigen::Vector2d dn1 = dn_dth_box1(n); // zero unless n is a1x/a1y
+            double dE1_dth1 = 0.0;
+            // d(ax1·n)/dθ1 = (∂a1x/∂θ1)·n + a1x·(∂n/∂θ1)
+            // But when n==a1x or a1y, E1 becomes constant wrt θ1 (unit axis aligns),
+            // so we can safely ignore the tiny residual term (kept general below):
+            const double dax1 = (-a1y).dot(n);    // (∂a1x/∂θ1)·n
+            const double day1 = ( a1x).dot(n); // (∂a1y/∂θ1)·n
+            const double sgn_ax1 = sgns(ax1);
+            const double sgn_ay1 = sgns(ay1);
+            // If n rotates (dn1!=0), additional terms from n in dot-products:
+            const double ax1_n = a1x.dot(dn1);
+            const double ay1_n = a1y.dot(dn1);
+            dE1_dth1 = e1.x() * sgn_ax1 * (dax1 + ax1_n) + e1.y() * sgn_ay1 * (day1 + ay1_n);
+
+            // E2 depends on θ1 only via n (if n==a1x/a1y):
+            const double sgn_ax2 = sgns(ax2);
+            const double sgn_ay2 = sgns(ay2);
+            const double ax2_n = a2x.dot(dn1);
+            const double ay2_n = a2y.dot(dn1);
+            const double dE2_dth1 = e2.x() * sgn_ax2 * ax2_n + e2.y() * sgn_ay2 * ay2_n;
+
+            // T term via n (only if n from box1): dT/dθ1 = dt * d·(dn1)
+            const double dT_dth1 = dt * d.dot(dn1);
+
+            out.dth1 = dT_dth1 - (dE1_dth1 + dE2_dth1);
         }
+
+        // Box2:
+        {
+            const Eigen::Vector2d dn2 = dn_dth_box2(n); // zero unless n is a2x/a2y
+            double dE2_dth2 = 0.0;
+
+            const double dax2 = (-a2y).dot(n);    // (∂a2x/∂θ2)·n
+            const double day2 = ( a2x).dot(n); // (∂a2y/∂θ2)·n
+            const double sgn_ax2 = sgns(ax2);
+            const double sgn_ay2 = sgns(ay2);
+            const double ax2_n = a2x.dot(dn2);
+            const double ay2_n = a2y.dot(dn2);
+            dE2_dth2 = e2.x() * sgn_ax2 * (dax2 + ax2_n) + e2.y() * sgn_ay2 * (day2 + ay2_n);
+
+            // E1 depends on θ2 only via n (if n==a2x/a2y):
+            const double sgn_ax1 = sgns(ax1);
+            const double sgn_ay1 = sgns(ay1);
+            const double ax1_n = a1x.dot(dn2);
+            const double ay1_n = a1y.dot(dn2);
+            const double dE1_dth2 = e1.x() * sgn_ax1 * ax1_n + e1.y() * sgn_ay1 * ay1_n;
+
+            const double dT_dth2 = dt * d.dot(dn2);
+
+            out.dth2 = dT_dth2 - (dE1_dth2 + dE2_dth2);
+        }
+
+        return out;
+    };
+
+    // Compute per-axis gaps and grads
+    SGrad gg[4];
+    gg[0] = dsep(a1x);
+    gg[1] = dsep(a1y);
+    gg[2] = dsep(a2x);
+    gg[3] = dsep(a2y);
+
+    double g[4];
+    for (int k = 0; k < 4; ++k)
+        g[k] = gg[k].s;
+
+    // Softmax weights w_k for φ = smoothmax(g_k)
+    double m = std::max(std::max(g[0], g[1]), std::max(g[2], g[3]));
+    double Z = 0.0;
+    for (int k = 0; k < 4; ++k)
+        Z += std::exp(beta * (g[k] - m));
+    double w[4];
+    for (int k = 0; k < 4; ++k)
+        w[k] = std::exp(beta * (g[k] - m)) / std::max(Z, 1e-12);
+
+    // dφ/dx = ∑_k w_k * dg_k/dx
+    Eigen::RowVector2d dphi_dc1 = Eigen::RowVector2d::Zero();
+    Eigen::RowVector2d dphi_dc2 = Eigen::RowVector2d::Zero();
+    double dphi_dth1 = 0.0, dphi_dth2 = 0.0;
+    for (int k = 0; k < 4; ++k)
+    {
+        dphi_dc1 += w[k] * gg[k].dc1;
+        dphi_dc2 += w[k] * gg[k].dc2;
+        dphi_dth1 += w[k] * gg[k].dth1;
+        dphi_dth2 += w[k] * gg[k].dth2;
     }
+
+    // Residual r = sqrt((d_safe - φ)^2 + eps_h^2) / d_safe
+    // → dr/dx = (1/d_safe) * ( (z/r) * (-dφ/dx) )
+    // We also skip if φ > d_safe (factor inactive)
+    // Recompute φ to get z (or reuse m,Z above)
+    const double phi =
+        m + std::log(std::max(Z, 1e-12)) / beta;
+    if (phi > safety_distance_)
+    {
+        this->skip_flag = true;
+        return J; // all zeros
+    }
+    this->skip_flag = false;
+
+    const double z = safety_distance_ - phi;
+    const double r = std::sqrt(z * z + eps_h * eps_h);
+    const double inv_sd = 1.0 / std::max(1e-9, safety_distance_);
+    const double scale = inv_sd * (z / std::max(r, 1e-12)) * (-1.0);
+
+    // Fill Jacobian (position + heading if present). Velocity columns remain 0.
+    // Box 1: x,y,(vx,vy),theta
+    J(0, 0) = scale * dphi_dc1.x();
+    J(0, 1) = scale * dphi_dc1.y();
+    // if (n0 >= 5) J(0, 4) = scale * dphi_dth1;
+    if (n0 >= 5) J(0, 4) = 0.0;
+
+    // Box 2 starts at column n0
+    J(0, n0 + 0) = scale * dphi_dc2.x();
+    J(0, n0 + 1) = scale * dphi_dc2.y();
+    // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2;
+    if (n1 >= 5) J(0, n0 + 4) = 0.0;
+
     return J;
 }
 
+
 bool InterrobotFactor::skip_factor()
 {
-    if (n_dofs_ == 5) {
-        this->skip_flag = ((X_(seqN(0, 2)) - X_(seqN(5, 2))).squaredNorm() >= safety_distance_ * safety_distance_);
-    } else {
-        // Original 4D implementation
-        this->skip_flag = ((X_(seqN(0, n_dofs_ / 2)) - X_(seqN(n_dofs_, n_dofs_ / 2))).squaredNorm() >= safety_distance_ * safety_distance_);
-    }
+    // const int n0 = variables_[0]->n_dofs_;
+    // Eigen::Vector2d p1 = X_.segment<2>(0);
+    // Eigen::Vector2d p2 = X_.segment<2>(n0);
+    // // Conservative bounding check using OBB circumscribed radii (half-diagonals)
+    // Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
+    // Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
+    // double r1 = e1.norm();
+    // double r2 = e2.norm();
+    // double center_dist = (p1 - p2).norm();
+    // double conservative = r1 + r2 + safety_distance_;
+    // this->skip_flag = (center_dist > conservative);
+    this->skip_flag = false;
     return this->skip_flag;
 }
 
@@ -528,113 +806,39 @@ void InterrobotFactor::draw()
 {
     auto v_0 = variables_[0];
     auto v_1 = variables_[1];
-   
-    if (!dbg) {
-        if (n_dofs_ == 5) {
-            Eigen::Vector2d pos1(X_(0), X_(1));
-            Eigen::Vector2d pos2(X_(5), X_(6));
-
-            double theta1 = X_(4), theta2 = X_(9);
-            double th1 = theta1 + robot1_angle_offset_, th2 = theta2 + robot2_angle_offset_;
-            
-            OBB2D obb1(pos1, robot1_dimensions_ / 2.0, th1);
-            OBB2D obb2(pos2, robot2_dimensions_ / 2.0, th2);
-
-            auto [axis1_1, axis1_2] = obb1.getAxes();
-            auto [axis2_1, axis2_2] = obb2.getAxes();
-
-            const auto& [dist, n_hat] = GeometryUtils::getOBBDistance(obb1, obb2);
-            
-            std::ostringstream oss;
-            oss << "ts=" << v_0->ts_ << ", th1=[" << th1 << "], th2=[" << th2 << "]\n";
-
-            oss << "var 1=[";
-            for (int i = 0; i < n_dofs_; ++i) {
-                oss << X_(i);
-                if (i < n_dofs_-1) oss << ",";
-            }
-            oss << "]\n";
-
-            oss << "axis1_1=[";
-            for (int i = 0; i < axis1_1.size(); ++i) {
-                oss << axis1_1(i);
-                if (i < axis1_1.size() - 1) oss << ",";
-            }
-            oss << "], axis1_2=[";
-            for (int i = 0; i < axis1_2.size(); ++i) {
-                oss << axis1_2(i);
-                if (i < axis1_2.size() - 1) oss << ",";
-            }
-            oss << "]\n";
-
-            oss << "var 2=[";
-            for (int i = n_dofs_; i < n_dofs_*2; ++i) {
-                oss << X_(i);
-                if (i < n_dofs_*2-1) oss << ",";
-            }
-            oss << "]\n";
-
-            oss << "axis2_1=[";
-            for (int i = 0; i < axis2_1.size(); ++i) {
-                oss << axis2_1(i);
-                if (i < axis2_1.size() - 1) oss << ",";
-            }
-            oss << "], axis2_2=[";
-            for (int i = 0; i < axis2_2.size(); ++i) {
-                oss << axis2_2(i);
-                if (i < axis2_2.size() - 1) oss << ",";
-            }
-            oss << "]\n";
-
-            oss << "dist=[" << dist << "], sep axis=[";
-            for (int i = 0; i < n_hat.size(); ++i) {
-                oss << n_hat(i);
-                if (i < n_hat.size() - 1) oss << ",";
-            }
-            oss << "]\n";
-
-            auto h = this->h_func_(X_);
-            auto J = this->J_func_(X_);
-
-            oss << "h=[";
-            for (int r = 0; r < h.rows(); ++r) {
-                for (int c = 0; c < h.cols(); ++c) {
-                    oss << h(r, c);
-                    if (c < h.cols() - 1) oss << ",";
-                }
-                if (r < h.rows() - 1) oss << ";";
-            }
-            oss << "]\n";
-
-            oss << "J=[";
-            for (int r = 0; r < J.rows(); ++r) {
-                for (int c = 0; c < J.cols(); ++c) {
-                    oss << J(r, c);
-                    if (c < J.cols() - 1) oss << ",";
-                }
-                if (r < J.rows() - 1) oss << ";";
-            }
-            oss << "]\n";
-
-            print(oss.str());
-        }
-        
-        if (n_dofs_ == 4) {
-            if (r_id_ == 16 && other_rid_ == 19 || r_id_ == 19 && other_rid_ == 16 || r_id_ == 19 && other_rid_ == 19 || r_id_ == 16 && other_rid_ == 16) 
-            {
-                auto h = this->h_func_(X_);
-                Eigen::Vector2d pos1 = X_(seqN(0, n_dofs_ / 2)), pos2 = X_(seqN(n_dofs_, n_dofs_ / 2));
-                Eigen::VectorXd X_diff = pos1 - pos2;
-                X_diff += 1e-6 * r_id_ * Eigen::VectorXd::Ones(n_dofs_ / 2);
-                // printf("ts=[%d], rids=[%d, %d(other_rid)], h=[%f], r=[%f], pos1=[%f, %f], pos2=[%f, %f]\n", v_0->ts_, r_id_, other_rid_, h(0), X_diff.norm(), pos1.x(), pos1.y(), pos2.x(), pos2.y());
-            }
-        }
-        dbg = true;
-    }
-    
     if (!v_0->valid_ || !v_1->valid_)
     {
         return;
+    }
+
+    if (!dbg)
+    {
+        const int n0 = v_0->n_dofs_;
+        const int n1 = v_1->n_dofs_;
+        const Eigen::Vector2d c1 = X_.segment<2>(0);
+        const Eigen::Vector2d c2 = X_.segment<2>(n0);
+
+        const double th1 = (n0 >= 5 ? X_(4) : 0.0);
+        const double th2 = (n1 >= 5 ? X_(n0 + 4) : 0.0);
+        const double o1 = th1 + robot1_angle_offset_;
+        const double o2 = th2 + robot2_angle_offset_;
+
+        auto h = this->h_func_(X_);
+        auto J = this->J_func_(X_);
+
+        auto diff = c1 - c2;
+        auto r = diff.norm();
+        auto prev_h = r > safety_distance_ ? 0.0 : 1.0 - r / safety_distance_;
+        Eigen::MatrixXd prev_J = Eigen::MatrixXd::Zero(1, 10);
+        if (r <= safety_distance_) {
+            prev_J(0, 0) = -1.0 / safety_distance_ / r * diff(0);
+            prev_J(0, 1) = -1.0 / safety_distance_ / r * diff(1);
+            prev_J(0, n0+0) = 1.0 / safety_distance_ / r * diff(0);
+            prev_J(0, n0+1) = 1.0 / safety_distance_ / r * diff(1);
+        }
+
+        printf("[DEBUG] ts=%d,%d, c1=%f,%f, c2=%f,%f, th=%f,%f, h=%f, J=[%f,%f,%f,%f,%f//%f,%f,%f,%f,%f], prev_h=%f, prev_J=[%f,%f//%f,%f]\n", v_0->ts_, v_1->ts_, c1.x(), c1.y(), c2.x(), c2.y(), o1, o2, h(0, 0), J(0,0), J(0,1), J(0,2), J(0,3), J(0,4), J(0,5), J(0,6), J(0,7), J(0,8), J(0,9), prev_h, prev_J(0, 0), prev_J(0, 1), prev_J(0, n0), prev_J(0, n0+1));
+        dbg = true;
     }
 
     auto diff = v_0->mu_({0, 1}) - v_1->mu_({0, 1});
@@ -673,22 +877,27 @@ Eigen::MatrixXd ObstacleFactor::h_func_(const Eigen::VectorXd &X)
 // Factor for dynamic obstalces.
 /********************************************************************************************/
 // Helper functions for chance-constraint via inflated safety-margins
-double sigmaNominalSq() { /* Returns the nominal sigma from nominal gamma (globals.RBF_GAMMA) */
+double sigmaNominalSq()
+{ /* Returns the nominal sigma from nominal gamma (globals.RBF_GAMMA) */
     return 0.5 / std::max(1e-12, globals.RBF_GAMMA);
 }
 
-double projectedVariance(const Eigen::Matrix2d* Sigma_k, const Eigen::Vector2d& diff) { /* Project sigma at timestep k */
-    if (!Sigma_k) return 0.0;
+double projectedVariance(const Eigen::Matrix2d *Sigma_k, const Eigen::Vector2d &diff)
+{ /* Project sigma at timestep k */
+    if (!Sigma_k)
+        return 0.0;
     double dn = diff.norm();
-    if (dn < 1e-9) {
+    if (dn < 1e-9)
+    {
         // At the obstacle point → use average variance as a safe fallback
         return 0.5 * Sigma_k->trace();
     }
     Eigen::Vector2d n = diff / dn;
-    return (n.transpose() * (*Sigma_k) * n)(0,0);
+    return (n.transpose() * (*Sigma_k) * n)(0, 0);
 }
 
-double gammaEff(const Eigen::Matrix2d* Sigma, const Eigen::Vector2d& diff) { /* Get the effective gamma for obstacle timestep k */
+double gammaEff(const Eigen::Matrix2d *Sigma, const Eigen::Vector2d &diff)
+{ /* Get the effective gamma for obstacle timestep k */
     const double s_nom2 = sigmaNominalSq();
     const double s_obs2 = projectedVariance(Sigma, diff);
     const double s_eff2 = s_nom2 + s_obs2;
@@ -737,7 +946,8 @@ Eigen::MatrixXd DynamicObstacleFactor::J_func_(const Eigen::VectorXd &X)
         grad_obs += -2.0 * gamma * w * diff;
     }
 
-    if (!neighbours_.empty()) grad_obs /= double(neighbours_.size());
+    if (!neighbours_.empty())
+        grad_obs /= double(neighbours_.size());
     J(0, 0) = grad_obs.x();
     J(0, 1) = grad_obs.y();
     return J;
@@ -760,29 +970,29 @@ void DynamicObstacleFactor::draw()
     if (closestNb.dist_squared <= (safety_distance_ * safety_distance_))
     {
         const Eigen::Vector2d nb_pos = closestNb.pt_world;
-        auto state_t = obs_->states_.at(int(delta_t_/globals.T0));
-        
+        auto state_t = obs_->states_.at(int(delta_t_ / globals.T0));
+
         // Draw line to closest neighbour
         DrawCylinderEx(Vector3{(float)v_0->mu_(0), globals.ROBOT_RADIUS, (float)v_0->mu_(1)},
                        Vector3{(float)nb_pos.x(), globals.ROBOT_RADIUS, (float)nb_pos.y()},
                        0.1, 0.1, 4, RED);
-        
+
         // Draw obstacle position at t
         float rotation = wrapAngle(state_t[4] + obs_->geom_->orientation_offset);
         float rotation_degrees = rotation * (180.0f / M_PI);
         DrawModelEx(obs_->geom_->model,
-            Vector3{(float)state_t[0], -obs_->geom_->boundingBox.min.y, (float)state_t[1]},
-            Vector3{0.0f, 1.0f, 0.0f},  // Rotate around Y axis
-            rotation_degrees,           // Rotation angle in degrees
-            Vector3{1.0f, 1.0f, 1.0f},  // Scale
-            ColorAlpha(DARKGREEN, 0.2f)
-        );
-        
+                    Vector3{(float)state_t[0], -obs_->geom_->boundingBox.min.y, (float)state_t[1]},
+                    Vector3{0.0f, 1.0f, 0.0f}, // Rotate around Y axis
+                    rotation_degrees,          // Rotation angle in degrees
+                    Vector3{1.0f, 1.0f, 1.0f}, // Scale
+                    ColorAlpha(DARKGREEN, 0.2f));
+
         // Draw violating variable
         DrawSphere(Vector3{(float)v_0->mu_(0), robot_radius_, (float)v_0->mu_(1)}, 0.8 * robot_radius_, ColorAlpha(DARKGREEN, 0.2f));
-        
+
         // Draw neighbours
-        for (const auto& nb : neighbours_) {
+        for (const auto &nb : neighbours_)
+        {
             auto nb_pos = nb.pt_world;
             DrawSphere(Vector3{(float)nb_pos.x(), robot_radius_, (float)nb_pos.y()}, 0.2 * robot_radius_, ColorAlpha(DARKBLUE, 0.2f));
         }

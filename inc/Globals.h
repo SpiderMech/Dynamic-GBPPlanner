@@ -39,6 +39,7 @@ class Globals {
     bool DRAW_WAYPOINTS;                                    // Toggle display of path planning goals
     bool DRAW_FACTORS;                                      // Toggle display of factors
     bool DRAW_OBSTACLES = true;                             // Toggle display of obstacles
+    bool DRAW_ROBOTS = true;                                // Toggle display of robots
     
     // Simulation parameters
     int SEED;                                               // Random Seed 

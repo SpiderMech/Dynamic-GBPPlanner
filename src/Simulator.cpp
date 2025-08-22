@@ -351,6 +351,9 @@ void Simulator::eventHandler()
     case KEY_O:
         globals.DRAW_OBSTACLES = !globals.DRAW_OBSTACLES;
         break;
+    case KEY_M:
+        globals.DRAW_ROBOTS = !globals.DRAW_ROBOTS;
+        break;
     case KEY_F:
         globals.DRAW_FACTORS = !globals.DRAW_FACTORS;
         break;
@@ -436,19 +439,19 @@ void Simulator::createOrDeleteRobots()
     std::vector<std::shared_ptr<Robot>> robots_to_delete{};
     Eigen::VectorXd starting, turning, ending; // Waypoints : [x,y,xdot,ydot].
     double bound = double(globals.WORLD_SZ / 2);
-
+    
     if (globals.FORMATION == "playground")
     {
         new_robots_needed_ = globals.NEW_ROBOTS_NEEDED;
-        // std::deque<Eigen::VectorXd> wps1{
-        //     Eigen::VectorXd{{-20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}},
-        //     Eigen::VectorXd{{20.0, -0.5, globals.MAX_SPEED * 1.0, 0.0, 0.0}}};
-        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
+        std::deque<Eigen::VectorXd> wps1{
+            Eigen::VectorXd{{0.0, 25.0, 0.0, (double)globals.MAX_SPEED, 0.0}},
+            Eigen::VectorXd{{0.0,-25.0, 0.0, (double)globals.MAX_SPEED, 0.0}}};
+        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
 
-        // std::deque<Eigen::VectorXd> wps2{
-        //     Eigen::VectorXd{{20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}},
-        //     Eigen::VectorXd{{-20.0, 0.5, globals.MAX_SPEED * -1.0, 0.0, 0.0}}};
-        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
+        std::deque<Eigen::VectorXd> wps2{
+            Eigen::VectorXd{{-25.0, 0.0, (double)globals.MAX_SPEED, 0.0, 0.0}},
+            Eigen::VectorXd{{ 25.0, 0.0, (double)globals.MAX_SPEED, 0.0, 0.0}}};
+        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -685,18 +688,18 @@ void Simulator::createOrDeleteObstacles()
 
     if (globals.FORMATION == "playground")
     {
-        new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
-        std::deque<Eigen::VectorXd> wps;
-        Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5);
-        wp1 << -10., -5., 1., 0., 0.;
-        wp2 <<   0., -5., 1., 0., 0.;
-        wp3 <<   0.,  5., 0., 1., 0.;
-        wp4 << -10.,  5., -1., 0., 0.;
-        wps = {wp1, wp2, wp3, wp4};
-        auto model = graphics->obstacleModels_[ObstacleType::VAN];
-        // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
-        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
-        obs_to_create.push_back(obs);
+        // new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
+        // std::deque<Eigen::VectorXd> wps;
+        // Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5);
+        // wp1 << -10., -5., 1., 0., 0.;
+        // wp2 <<   0., -5., 1., 0., 0.;
+        // wp3 <<   0.,  5., 0., 1., 0.;
+        // wp4 << -10.,  5., -1., 0., 0.;
+        // wps = {wp1, wp2, wp3, wp4};
+        // auto model = graphics->obstacleModels_[ObstacleType::VAN];
+        // // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
+        // auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
+        // obs_to_create.push_back(obs);
     }
 
     else if (globals.FORMATION == "layered_walls")

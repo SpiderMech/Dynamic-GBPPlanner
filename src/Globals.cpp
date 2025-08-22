@@ -27,6 +27,8 @@ void Globals::parse_global_args(std::ifstream& config_file){
     DRAW_PATH = static_cast<bool>((int)j["DRAW_PATH"]);
     DRAW_WAYPOINTS = static_cast<bool>((int)j["DRAW_WAYPOINTS"]);
     DRAW_FACTORS = static_cast<bool>((int)j.value("DRAW_FACTORS", 0));
+    DRAW_OBSTACLES = static_cast<bool>((int)j.value("DRAW_OBSTACLES", 1));
+    DRAW_ROBOTS = static_cast<bool>((int)j.value("DRAW_ROBOTS", 1));
 
     // Simulation parameters
     SEED = j["SEED"];

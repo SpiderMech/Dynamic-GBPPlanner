@@ -437,8 +437,8 @@ void Robot::createInterrobotFactors(std::shared_ptr<Robot> other_robot)
         // Get variables
         std::vector<std::shared_ptr<Variable>> variables{getVar(i), other_robot->getVar(i)};
 
-        // Create the inter-robot factor with robot dimensions for OBB collision
-        Eigen::VectorXd z = Eigen::VectorXd::Zero(variables.front()->n_dofs_);
+        // Create the inter-robot factor with a scalar penalty (center-to-center)
+        Eigen::VectorXd z = Eigen::VectorXd::Zero(1);
         auto factor = std::make_shared<InterrobotFactor>(sim_->next_fid_++, this->rid_, variables, dofs_,
                                                          globals.SIGMA_FACTOR_INTERROBOT, z, 
                                                          0.5 * (this->robot_radius_ + other_robot->robot_radius_),
@@ -682,24 +682,26 @@ void Robot::draw()
         for (auto [fid, factor] : factors_)
             factor->draw();
     }
-    // Draw the robot model based on its type
-    if (robot_type_ == RobotType::SPHERE) {
-        // For sphere type, just draw a sphere (original implementation)
-        DrawModel(sim_->graphics->robotModels_[robot_type_]->model,
-                  Vector3{(float)position_(0), height_3D_, (float)position_(1)},
-                  robot_radius_, col);
-    } else {
-        // For car/bus models, apply rotation and proper scaling
-        // Convert orientation from radians to degrees for Raylib
-        float rotation_degrees = (orientation_ + model_info->orientation_offset) * (180.0f / M_PI);
-        float adjusted_rotation = std::remainder(rotation_degrees, 360.f);
-        
-        // DrawModelEx allows us to specify position, rotation axis, rotation angle, scale, and tint
-        DrawModelEx(model_info->model,
-                    Vector3{(float)position_(0), height_3D_, (float)position_(1)},
-                    Vector3{0.0f, 1.0f, 0.0f},       // Rotate around Y axis
-                    adjusted_rotation,               // Rotation angle in degrees with offset
-                    Vector3{scale_, scale_, scale_}, // Uniform scale
-                    col);                            // Color tint
+    if (globals.DRAW_ROBOTS) {
+        // Draw the robot model based on its type
+        if (robot_type_ == RobotType::SPHERE) {
+            // For sphere type, just draw a sphere (original implementation)
+            DrawModel(sim_->graphics->robotModels_[robot_type_]->model,
+                      Vector3{(float)position_(0), height_3D_, (float)position_(1)},
+                      robot_radius_, col);
+        } else {
+            // For car/bus models, apply rotation and proper scaling
+            // Convert orientation from radians to degrees for Raylib
+            float rotation_degrees = (orientation_ + model_info->orientation_offset) * (180.0f / M_PI);
+            float adjusted_rotation = std::remainder(rotation_degrees, 360.f);
+            
+            // DrawModelEx allows us to specify position, rotation axis, rotation angle, scale, and tint
+            DrawModelEx(model_info->model,
+                        Vector3{(float)position_(0), height_3D_, (float)position_(1)},
+                        Vector3{0.0f, 1.0f, 0.0f},       // Rotate around Y axis
+                        adjusted_rotation,               // Rotation angle in degrees with offset
+                        Vector3{scale_, scale_, scale_}, // Uniform scale
+                        col);                            // Color tint
+        }
     }
 };
