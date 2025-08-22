@@ -1,7 +1,7 @@
 {
   "_comment0": "Basic parameters",
   "ASSETS_DIR": "../assets/",
-  "N_DOFS": 4,
+  "N_DOFS": 5,
   "EVAL": 1,
   "VERBOSE": 1,
   

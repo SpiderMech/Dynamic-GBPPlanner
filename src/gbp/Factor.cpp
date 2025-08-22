@@ -472,7 +472,7 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
     // Use a center-to-center safety distance irrespective of DOFs.
     // This stabilizes GBP and avoids orientation-induced flips.
     if (n_dofs >= 5) {
-        this->safety_distance_ = 2.5;
+        this->safety_distance_ = 1.0;
     } else {
         float eps = 0.5f * robot_radius;
         this->safety_distance_ = 2 * robot_radius + eps; // ~= r1 + r2 + margin
@@ -776,18 +776,18 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     const double scale = inv_sd * (z / std::max(r, 1e-12)) * (-1.0);
     const double alpha = 10.0;
     // double kth = 1.0 / (1.0 + std::exp(-alpha * z));
-    double kth = 1e-2;
+    double kth = 1.0;
 
     // Fill Jacobian (position + heading if present). Velocity columns remain 0.
     // Box 1: x,y,(vx,vy),theta
-    J(0, 0) = scale * dphi_dc1.x();
-    J(0, 1) = scale * dphi_dc1.y();
+    J(0, 0) = scale * dphi_dc1.x() * kth;
+    J(0, 1) = scale * dphi_dc1.y() * kth;
     // if (n0 >= 5) J(0, 4) = scale * dphi_dth1 * kth;
     if (n0 >= 5) J(0, 4) = 0.0;
 
     // Box 2 starts at column n0
-    J(0, n0 + 0) = scale * dphi_dc2.x();
-    J(0, n0 + 1) = scale * dphi_dc2.y();
+    J(0, n0 + 0) = scale * dphi_dc2.x() * kth;
+    J(0, n0 + 1) = scale * dphi_dc2.y() * kth;
     // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2 * kth;
     if (n1 >= 5) J(0, n0 + 4) = 0.0;
 

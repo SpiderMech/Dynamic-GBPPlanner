@@ -520,11 +520,12 @@ void Simulator::createOrDeleteRobots()
         const double lane_width = 4. * globals.ROBOT_RADIUS;
         float now = clock_ * globals.TIMESTEP;
 
+        double M = 10.5;
         static std::vector<PoissonSpawner> robot_spawners = {
-            {2.5, 0.5, "robot_r0", globals.VERBOSE},
-            {2.5, 0.5, "robot_r1", globals.VERBOSE},
-            {2.5, 0.5, "robot_r2", globals.VERBOSE},
-            {2.5, 0.5, "robot_r3", globals.VERBOSE},
+            {M, 0.5, "robot_r0", globals.VERBOSE},
+            {M, 0.5, "robot_r1", globals.VERBOSE},
+            {M, 0.5, "robot_r2", globals.VERBOSE},
+            {M, 0.5, "robot_r3", globals.VERBOSE},
         };
 
         // Predefine the four finish lines at junction exits
