@@ -356,8 +356,8 @@ void Robot::updateHorizon()
         Eigen::Vector2d new_pos = horizon->mu_.head<2>() + new_vel * globals.TIMESTEP;
 
         // Hard clamp: keep horizon inside the reachable disc from x0 (defensive)
-        Eigen::Vector2d x0_to_new = new_pos - x0;
-        if (x0_to_new.norm() > d_max) new_pos = x0 + (d_max / x0_to_new.norm()) * x0_to_new;
+        // Eigen::Vector2d x0_to_new = new_pos - x0;
+        // if (x0_to_new.norm() > d_max) new_pos = x0 + (d_max / x0_to_new.norm()) * x0_to_new;
 
         Eigen::VectorXd new_mu(dofs_);
         if (dofs_ == 5) {

@@ -105,6 +105,8 @@ class DynamicsFactor : public Factor
 {
     double dt_;
     double v0_ = globals.MAX_SPEED * 0.4; // Velocity scale for orientation transitions
+    double theta_prev_ = std::numeric_limits<double>::quiet_NaN(); // ref used by h_func_
+    double theta_buf_  = std::numeric_limits<double>::quiet_NaN(); // staged for next iter
 public:
     DynamicsFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
                    float sigma, const Eigen::VectorXd &measurement, float dt);
@@ -127,6 +129,8 @@ class InterrobotFactor : public Factor
     Eigen::Vector2d robot2_dimensions_;  // Dimensions of second robot
     double robot1_angle_offset_;         // Default angle offset of OBB of first robot
     double robot2_angle_offset_;         // Default angle offset of OBB of second robot
+    double tau_d_;
+    std::array<double,4> w_prev_ = {0.25, 0.25, 0.25, 0.25};
 
 public:
     InterrobotFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,

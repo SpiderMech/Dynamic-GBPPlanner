@@ -356,6 +356,7 @@ Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
         else
         {
             // At low speeds, don't constrain orientation
+            // Issue: this causes free spinning at low speeds?
             h(4) = 0.0;
         }
 
@@ -367,6 +368,76 @@ Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
         return J_ * X;
     }
 }
+
+// Eigen::MatrixXd DynamicsFactor::h_func_(const Eigen::VectorXd &X)
+// {
+//     if (n_dofs_ == 5)
+//     {
+//         // X = [x1,y1,xdot1,ydot1,theta1, x2,y2,xdot2,ydot2,theta2]
+//         Eigen::VectorXd h = Eigen::VectorXd::Zero(5);
+
+//         // Position (x2 = x1 + xdot1*dt)
+//         h(0) = X(0) + X(2) * dt_ - X(5);
+//         h(1) = X(1) + X(3) * dt_ - X(6);
+
+//         // Constant velocity (xdot2 = xdot1)
+//         h(2) = X(2) - X(7);
+//         h(3) = X(3) - X(8);
+
+//         // -------- Orientation (blended) --------
+//         const double xdot2 = X(7), ydot2 = X(8);
+//         const double v2    = xdot2*xdot2 + ydot2*ydot2;
+//         const double vmag  = std::sqrt(v2);
+
+//         // Smooth speed gates: below v_low => pure θ-smoothness; above v_high => pure heading align
+//         const double v_low  = 0.05 * v0_;
+//         const double v_high = 0.30 * v0_;
+//         auto clamp01 = [](double x){ return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x); };
+//         double s = (v_high > v_low) ? clamp01((vmag - v_low) / (v_high - v_low)) : 1.0;
+//         // smoothstep for C1 continuity
+//         double w_align = s*s*(3.0 - 2.0*s); // in [0,1]
+
+//         // Heading from velocity (screen Y down -> negate to keep right-handed angle sense)
+//         double theta_vel = -wrapAngle(std::atan2(ydot2, xdot2));
+
+//         // Two angle residuals
+//         double a = angle_diff(theta_vel, X(9)); // align to velocity
+//         double b = angle_diff(X(4),      X(9)); // keep near previous θ
+
+//         // Blended orientation residual
+//         h(4) = w_align * a + (1.0 - w_align) * b;
+
+        
+//         /* --DEBUG-- */
+//         bool in_transition = (w_align > 1e-6 && w_align < 1.0 - 1e-6);
+//         bool slow          = (vmag < 0.5 * v0_);
+//         if (in_transition || slow) {
+//             auto v0 = variables_[0];
+//             auto v1 = variables_[1];
+            
+//             std::ostringstream oss;
+//             oss << "[DEBUG] [h] ts=" << v0->ts_ << "," << v1->ts_
+//                 << " x2=(" << X(5) << "," << X(6) << ")"
+//                 << " v2=(" << X(7) << "," << X(8) << ")"
+//                 << " vmag=" << vmag
+//                 << " w=" << w_align
+//                 << " a(θv-θ2)=" << a
+//                 << " b(θ1-θ2)=" << b
+//                 << " rθ=" << h(4)
+//                 << " θ1=" << X(4)
+//                 << " θ2=" << X(9);
+//             print(oss.str());
+//         }
+//         /* --DEBUG-- */
+
+//         return h;
+//     }
+//     else
+//     {
+//         return J_ * X; // 4D original
+//     }
+// }
+
 
 Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
 {
@@ -427,6 +498,110 @@ Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
     }
 }
 
+
+// Eigen::MatrixXd DynamicsFactor::J_func_(const Eigen::VectorXd &X)
+// {
+//     if (n_dofs_ == 5)
+//     {
+//         Eigen::MatrixXd J = Eigen::MatrixXd::Zero(5, 10);
+
+//         // Position & velocity rows
+//         J(0,0) = 1;    J(0,2) = dt_; J(0,5) = -1;
+//         J(1,1) = 1;    J(1,3) = dt_; J(1,6) = -1;
+//         J(2,2) = 1;    J(2,7) = -1;
+//         J(3,3) = 1;    J(3,8) = -1;
+
+//         // -------- Orientation row --------
+//         const double xdot2 = X(7), ydot2 = X(8);
+//         const double v2    = xdot2*xdot2 + ydot2*ydot2;
+//         const double vmag  = std::sqrt(std::max(1e-16, v2)); // avoid 0/0
+
+//         const double v_low  = 0.05 * v0_;
+//         const double v_high = 0.30 * v0_;
+//         auto clamp01 = [](double x){ return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x); };
+//         double s = (v_high > v_low) ? clamp01((vmag - v_low) / (v_high - v_low)) : 1.0;
+//         double w_align = s*s*(3.0 - 2.0*s); // smoothstep
+
+//         // theta_vel = -atan2(ydot2, xdot2)
+//         // d(theta_vel)/dx =  y / (x^2 + y^2); d(theta_vel)/dy = -x / (x^2 + y^2)
+//         const double v2_reg = v2 + (0.1 * v0_) * (0.1 * v0_); // gentle regulariser
+//         const double dthetad_x =  ydot2 / v2_reg;
+//         const double dthetad_y = -xdot2 / v2_reg;
+
+//         // Residual parts:
+//         // a = angle_diff(theta_vel, θ2) => da/dθ2 = -1, da/dx = dthetad_x, da/dy = dthetad_y
+//         // b = angle_diff(θ1, θ2)       => db/dθ1 =  1,  db/dθ2 = -1
+//         //
+//         // r = w*a + (1-w)*b
+//         // ∂r = w∂a + (1-w)∂b + (∂w)(a - b)
+
+//         // Compute a and b for the (∂w)(a-b) term
+//         double theta_vel = -wrapAngle(std::atan2(ydot2, xdot2));
+//         double a = angle_diff(theta_vel, X(9));
+//         double b = angle_diff(X(4),      X(9));
+//         double a_minus_b = a - b;
+
+//         // ∂a, ∂b terms
+//         J(4,7) += w_align * dthetad_x;   // via a
+//         J(4,8) += w_align * dthetad_y;   // via a
+//         J(4,9) += w_align * (-1.0)       // ∂a/∂θ2
+//                 + (1.0 - w_align) * (-1.0); // ∂b/∂θ2
+//         J(4,4) += (1.0 - w_align) * ( 1.0); // ∂b/∂θ1
+
+//         // ∂w terms (optional but helpful around the transition)
+//         if (v_high > v_low && vmag > 1e-12)
+//         {
+//             // smoothstep: w = 3s^2 - 2s^3; dw/ds = 6s - 6s^2 = 6s(1-s)
+//             double dwds = 6.0 * s * (1.0 - s);
+//             double dsdv = 1.0 / (v_high - v_low); // inside (0,1) region, else 0
+//             // guard: only active when 0<s<1 to avoid kinks
+//             if (s > 0.0 && s < 1.0)
+//             {
+//                 double dvdx = (xdot2 / vmag);
+//                 double dvdy = (ydot2 / vmag);
+//                 double dwdx = dwds * dsdv * dvdx;
+//                 double dwdy = dwds * dsdv * dvdy;
+
+//                 J(4,7) += dwdx * a_minus_b;
+//                 J(4,8) += dwdy * a_minus_b;
+//             }
+//         }
+        
+//         /* -- DEBUG -- */
+//         bool in_transition = (w_align > 1e-6 && w_align < 1.0 - 1e-6);
+//         bool slow          = (vmag < 0.5 * v0_);
+//         if (in_transition || slow) { 
+//             const auto row = J.row(4);
+//             auto v0 = variables_[0];
+//             auto v1 = variables_[1];
+    
+//             std::ostringstream oss;
+//             oss << "[DEBUG] [J] ts=" << v0->ts_ << "," << v1->ts_
+//                 << " vmag=" << vmag
+//                 << " w=" << w_align
+//                 << " dθv/dxdot=" << dthetad_x
+//                 << " dθv/dydot=" << dthetad_y
+//                 << " (a-b)=" << a_minus_b
+//                 << " Jθ-nz{ ";
+//             for (int c = 0; c < row.cols(); ++c) {
+//                 double val = row(c);
+//                 if (std::abs(val) > 1e-12) {
+//                     oss << c << ":" << val << " ";
+//                 }
+//             }
+//             oss << "}";
+//             print(oss.str());
+//         }
+//         /* -- DEBUG -- */
+
+//         return J;
+//     }
+//     else
+//     {
+//         return J_;
+//     }
+// }
+
 void DynamicsFactor::draw()
 {
     if (!globals.DRAW_PATH)
@@ -472,12 +647,12 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
     // Use a center-to-center safety distance irrespective of DOFs.
     // This stabilizes GBP and avoids orientation-induced flips.
     if (n_dofs >= 5) {
-        this->safety_distance_ = 1.0;
+        this->safety_distance_ = 1.2;
     } else {
         float eps = 0.5f * robot_radius;
         this->safety_distance_ = 2 * robot_radius + eps; // ~= r1 + r2 + margin
     }
-
+    tau_d_ = 0.2 * safety_distance_;
     // Analytical Jacobian is used (no orientation derivatives).
     this->delta_jac = 1e-4;
 }
@@ -513,7 +688,7 @@ Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
 
     // Smooth |·| and smoothmax params
     const double eps_abs = 1e-6; // for |t|
-    const double beta = 6.0;    // softmax hardness
+    const double beta = 3.0;    // softmax hardness
     auto sabs = [&](double t)
     { return std::sqrt(t * t + eps_abs * eps_abs); };
 
@@ -544,20 +719,52 @@ Eigen::MatrixXd InterrobotFactor::h_func_(const Eigen::VectorXd &X)
     // Smoothmax across the 4 gaps → smooth “best” signed separation
     double m = std::max(std::max(g[0], g[1]), std::max(g[2], g[3]));
     double Z = 0.0;
-    for (int k = 0; k < 4; ++k)
-        Z += std::exp(beta * (g[k] - m));
+    for (int k = 0; k < 4; ++k) Z += std::exp(beta * (g[k] - m));
     const double phi = m + std::log(std::max(Z, 1e-12)) / beta;
 
     // Smooth hinge residual on (d_safe - phi)
     const double z = safety_distance_ - phi; // >0 ⇒ violation
-    const double eps_h = 1e-6;
-    const double r = std::sqrt(z * z + eps_h * eps_h);
+    // const double eps_h = 1e-6;
+    // const double r = std::sqrt(z * z + eps_h * eps_h);
+    auto softplus_centered = [](double s){
+        const double a = std::abs(s);
+        return (std::max(s,0.0) + std::log1p(std::exp(-a))) - std::log(2.0);
+    };
+
+    const double s = z / tau_d_;
+    const double r = tau_d_ * softplus_centered(s);
+    const double gate = 1.0 / (1.0 + std::exp((phi - (safety_distance_ + 2.0*tau_d_)) / (0.5*tau_d_)));
 
     // Deactivate (skip/zero) far-away pairs
-    this->skip_flag = (phi > safety_distance_);
+    // this->skip_flag = (phi > safety_distance_ + 3.0 * tau_d_);
 
     // Output residual, normalised by d_safe to keep scale ~O(1)
-    h(0, 0) = (this->skip_flag ? 0.0 : r / std::max(1e-9, safety_distance_));
+    // h(0, 0) = this->skip_flag ? 0.0 : (r / std::max(1e-9, safety_distance_));
+    h(0,0) = gate * (r / std::max(1e-9, safety_distance_));
+    // h(0, 0) = r / std::max(1e-9, safety_distance_);
+    
+    if (dbg) {
+        std::ostringstream oss;
+        auto v0 = variables_[0];
+        auto v1 = variables_[1];
+        double Zg = 0.0, w[4];
+        for (int k=0;k<4;++k) { w[k] = std::exp(beta*(g[k]-m)); Zg += w[k]; }
+        for (int k=0;k<4;++k) w[k] /= std::max(Zg, 1e-12);
+        auto vel1 = v0->mu_.segment<2>(2);
+        auto vel2 = v1->mu_.segment<2>(2);
+        auto v_rel = vel1-vel2;
+        oss << "[DEBUG] [h] ts" <<  v0->ts_ << "," << v1->ts_
+            << " phi=" << phi
+            << " z=" << z
+            << " s=" << s
+            << " r=" << r
+            << " h=" << h(0,0)
+            << " gate=" << gate
+            << " gaps=["<<g[0]<<","<<g[1]<<","<<g[2]<<","<<g[3]<<"]"
+            << " w=["<<w[0]<<","<<w[1]<<","<<w[2]<<","<<w[3]<<"]"
+            << " vrel=["<<v_rel.x()<<","<<v_rel.y()<<"]";
+        print(oss.str());
+    }
     return h;
 }
 
@@ -568,13 +775,13 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
 
     Eigen::MatrixXd J = Eigen::MatrixXd::Zero(1, n0 + n1);
 
-    // State slices
+    // --- State slices ---
     const Eigen::Vector2d c1 = X.segment<2>(0);
     const Eigen::Vector2d c2 = X.segment<2>(n0);
     const double th1 = (n0 >= 5 ? wrapAngle(X(4)) : 0.0);
     const double th2 = (n1 >= 5 ? wrapAngle(X(n0 + 4)) : 0.0);
 
-    // OBB params with your offsets
+    // --- OBB params with offsets ---
     const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
     const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
     const double o1 = wrapAngle(th1 + robot1_angle_offset_);
@@ -590,143 +797,59 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
 
     const Eigen::Vector2d d = c2 - c1;
 
-    // Smoothing constants
-    const double eps_abs = 1e-6;
-    const double eps_h = 1e-6;
-    const double beta = 6.0;
+    // --- Smoothing params ---
+    const double eps_abs = 1e-3;    // smoother |·| near t≈0
+    const double beta     = 3.0;    // smoothmax sharpness
 
-    auto sabs = [&](double t)
-    { return std::sqrt(t * t + eps_abs * eps_abs); };
-    auto sgns = [&](double t)
-    { return t / std::sqrt(t * t + eps_abs * eps_abs); }; // d/dt |t|
+    auto sabs = [&](double t){ return std::sqrt(t*t + eps_abs*eps_abs); };
+    auto sgns = [&](double t){ return t / sabs(t); };  // d/dt sabs(t)
 
-    // Axis derivative helpers: for your getAxes(), d/dθ of the two axes is:
-    // ∂a_x/∂θ = +a_y,   ∂a_y/∂θ = -a_x
-    auto dn_dth_box1 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
-    {
-        // if n==a1x → -a1y; if n==a1y → a1x; else 0
+    // --- per-axis gap + gradients ---
+    struct SGrad {
+        double s;
+        Eigen::RowVector2d dc1, dc2;
+        double dth1, dth2;
+    };
+
+    auto dn_dth_box1 = [&](const Eigen::Vector2d &n)->Eigen::Vector2d{
         if ((n - a1x).squaredNorm() < 1e-18) return -a1y;
         if ((n - a1y).squaredNorm() < 1e-18) return  a1x;
         return Eigen::Vector2d::Zero();
     };
-    auto dn_dth_box2 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
-    {
-        // if n==a2x → -a2y; if n==a2y → a2x; else 0
+    auto dn_dth_box2 = [&](const Eigen::Vector2d &n)->Eigen::Vector2d{
         if ((n - a2x).squaredNorm() < 1e-18) return -a2y;
         if ((n - a2y).squaredNorm() < 1e-18) return  a2x;
         return Eigen::Vector2d::Zero();
     };
 
-    // E(ax, ay, e; n) = e.x*|ax·n| + e.y*|ay·n|
     auto extent = [&](const Eigen::Vector2d &n,
                       const Eigen::Vector2d &ax, const Eigen::Vector2d &ay,
-                      const Eigen::Vector2d &e) -> double
-    {
-        return e.x() * sabs(ax.dot(n)) + e.y() * sabs(ay.dot(n));
+                      const Eigen::Vector2d &e)->double{
+        return e.x()*sabs(ax.dot(n)) + e.y()*sabs(ay.dot(n));
     };
 
-    // s(n) = |d·n| - (E1(n)+E2(n))
-    struct SGrad
-    {
-        double s;
-        Eigen::RowVector2d dc1;
-        Eigen::RowVector2d dc2;
-        double dth1;
-        double dth2;
-    };
+    auto dsep = [&](const Eigen::Vector2d &n)->SGrad{
+        SGrad out; out.s=0; out.dc1.setZero(); out.dc2.setZero(); out.dth1=0; out.dth2=0;
 
-    auto dsep = [&](const Eigen::Vector2d &n) -> SGrad
-    {
-        SGrad out;
-        out.s = 0.0;
-        out.dc1.setZero();
-        out.dc2.setZero();
-        out.dth1 = 0.0;
-        out.dth2 = 0.0;
+        const double t  = d.dot(n);
+        const double T  = sabs(t);
+        const double dt = sgns(t);
 
-        // Scalar parts
-        const double t = d.dot(n);
-        const double T = sabs(t);
-        const double dt = sgns(t); // dT/dt
-
-        // Extents
         const double ax1 = a1x.dot(n), ay1 = a1y.dot(n);
         const double ax2 = a2x.dot(n), ay2 = a2y.dot(n);
-        const double E1 = e1.x() * sabs(ax1) + e1.y() * sabs(ay1);
-        const double E2 = e2.x() * sabs(ax2) + e2.y() * sabs(ay2);
+        const double E1  = e1.x()*sabs(ax1) + e1.y()*sabs(ay1);
+        const double E2  = e2.x()*sabs(ax2) + e2.y()*sabs(ay2);
 
-        out.s = T - (E1 + E2);
-
-        // Position grads (treat n as fixed for pos — standard SAT linearization)
-        // dT/dc1 = dT/dt * d·n/dc1 = dt * (-n),   dT/dc2 = dt * (+n)
+        out.s   = T - (E1 + E2);
         out.dc1 = (-dt) * n.transpose();
         out.dc2 = (+dt) * n.transpose();
 
-        // Heading grads: two effects:
-        // (i) when n comes from that box, n rotates: dT/dθ = dt * d·(dn/dθ)
-        // (ii) E-terms change via d(ax·n)/dθ and d(ay·n)/dθ
-        // Box1:
-        {
-            const Eigen::Vector2d dn1 = dn_dth_box1(n); // zero unless n is a1x/a1y
-            double dE1_dth1 = 0.0;
-            // d(ax1·n)/dθ1 = (∂a1x/∂θ1)·n + a1x·(∂n/∂θ1)
-            // But when n==a1x or a1y, E1 becomes constant wrt θ1 (unit axis aligns),
-            // so we can safely ignore the tiny residual term (kept general below):
-            const double dax1 = (-a1y).dot(n);    // (∂a1x/∂θ1)·n
-            const double day1 = ( a1x).dot(n); // (∂a1y/∂θ1)·n
-            const double sgn_ax1 = sgns(ax1);
-            const double sgn_ay1 = sgns(ay1);
-            // If n rotates (dn1!=0), additional terms from n in dot-products:
-            const double ax1_n = a1x.dot(dn1);
-            const double ay1_n = a1y.dot(dn1);
-            // dE1_dth1 = e1.x() * sgn_ax1 * (dax1 + ax1_n) + e1.y() * sgn_ay1 * (day1 + ay1_n);
-            dE1_dth1 = e1.x()*sgn_ax1 *dax1 + e1.y()*sgn_ay1*day1;
-
-            // E2 depends on θ1 only via n (if n==a1x/a1y):
-            const double sgn_ax2 = sgns(ax2);
-            const double sgn_ay2 = sgns(ay2);
-            const double ax2_n = a2x.dot(dn1);
-            const double ay2_n = a2y.dot(dn1);
-            const double dE2_dth1 = e2.x() * sgn_ax2 * ax2_n + e2.y() * sgn_ay2 * ay2_n;
-
-            // T term via n (only if n from box1): dT/dθ1 = dt * d·(dn1)
-            const double dT_dth1 = dt * d.dot(dn1);
-
-            // out.dth1 = dT_dth1 - (dE1_dth1 + dE2_dth1);
-            out.dth1 =-dE1_dth1;
-        }
-
-        // Box2:
-        {
-            const Eigen::Vector2d dn2 = dn_dth_box2(n); // zero unless n is a2x/a2y
-            double dE2_dth2 = 0.0;
-
-            const double dax2 = (-a2y).dot(n);    // (∂a2x/∂θ2)·n
-            const double day2 = ( a2x).dot(n); // (∂a2y/∂θ2)·n
-            const double sgn_ax2 = sgns(ax2);
-            const double sgn_ay2 = sgns(ay2);
-            const double ax2_n = a2x.dot(dn2);
-            const double ay2_n = a2y.dot(dn2);
-            // dE2_dth2 = e2.x() * sgn_ax2 * (dax2 + ax2_n) + e2.y() * sgn_ay2 * (day2 + ay2_n);
-            dE2_dth2 = e2.x()*sgn_ax2*dax2 + e2.y()*sgn_ay2*day2;
-
-            // E1 depends on θ2 only via n (if n==a2x/a2y):
-            const double sgn_ax1 = sgns(ax1);
-            const double sgn_ay1 = sgns(ay1);
-            const double ax1_n = a1x.dot(dn2);
-            const double ay1_n = a1y.dot(dn2);
-            const double dE1_dth2 = e1.x() * sgn_ax1 * ax1_n + e1.y() * sgn_ay1 * ay1_n;
-
-            const double dT_dth2 = dt * d.dot(dn2);
-
-            // out.dth2 = dT_dth2 - (dE1_dth2 + dE2_dth2);
-            out.dth2 = -dE1_dth2;
-        }
-
+        // θ-terms kept zero for now (you’re not filling θ columns):
+        // out.dth1/out.dth2 could include -dE/dθ etc. later when enabling θ
         return out;
     };
 
-    // Compute per-axis gaps and grads
+    // --- compute gaps/gradients on 4 axes ---
     SGrad gg[4];
     gg[0] = dsep(a1x);
     gg[1] = dsep(a1y);
@@ -734,65 +857,351 @@ Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
     gg[3] = dsep(a2y);
 
     double g[4];
-    for (int k = 0; k < 4; ++k)
-        g[k] = gg[k].s;
+    for (int k=0;k<4;++k) g[k] = gg[k].s;
 
-    // Softmax weights w_k for φ = smoothmax(g_k)
-    double m = std::max(std::max(g[0], g[1]), std::max(g[2], g[3]));
-    double Z = 0.0;
-    for (int k = 0; k < 4; ++k)
-        Z += std::exp(beta * (g[k] - m));
-    double w[4];
-    for (int k = 0; k < 4; ++k)
-        w[k] = std::exp(beta * (g[k] - m)) / std::max(Z, 1e-12);
+    // ===== (A) φ for residual/gate: from RAW gaps (NO bias, NO EMA) =====
+    double mg = std::max(std::max(g[0],g[1]), std::max(g[2],g[3]));
+    double Zg = 0.0; for (int k=0;k<4;++k) Zg += std::exp(beta*(g[k]-mg));
+    const double phi_g = mg + std::log(std::max(Zg, 1e-12)) / beta;
 
-    // dφ/dx = ∑_k w_k * dg_k/dx
+    // ===== (B) Weights for gradient: BIASED gaps + EMA (tie-break + smoothing) =====
+    // relative velocity consistent with d = c2 - c1
+    const Eigen::Vector2d v1 = X.segment<2>(2);
+    const Eigen::Vector2d v2 = X.segment<2>(n0+2);
+    const Eigen::Vector2d v_rel = v2 - v1;
+
+    double t0 = d.dot(a1x), t1 = d.dot(a1y), t2 = d.dot(a2x), t3 = d.dot(a2y);
+    Eigen::Vector2d neff[4] = { sgns(t0)*a1x, sgns(t1)*a1y, sgns(t2)*a2x, sgns(t3)*a2y };
+
+    const double dt_bias = 0.15; // s
+    double gb[4];
+    for (int k=0;k<4;++k){
+        const double dgdt = neff[k].dot(v_rel);   // m/s
+        gb[k] = g[k] + dt_bias * dgdt;           // biased gap (meters)
+    }
+
+    double mb = std::max(std::max(gb[0],gb[1]), std::max(gb[2],gb[3]));
+    double expv[4], Zb = 0.0;
+    for (int k=0;k<4;++k){ expv[k] = std::exp(beta*(gb[k]-mb)); Zb += expv[k]; }
+    double w[4]; const double invZb = 1.0 / std::max(Zb, 1e-12);
+    for (int k=0;k<4;++k) w[k] = expv[k] * invZb;
+
+    // EMA over weights (per-factor storage is ideal; thread_local is okay if needed)
+    // static thread_local std::array<double,4> w_prev = {0.25,0.25,0.25,0.25};
+    const double alpha = 0.3;
+    double w_s[4]; double Sw = 1e-12;
+    for (int k=0;k<4;++k){ w_s[k] = alpha*w[k] + (1.0-alpha)*w_prev_[k]; Sw += w_s[k]; }
+    for (int k=0;k<4;++k) w[k] = w_s[k] / Sw;
+    w_prev_ = {w[0], w[1], w[2], w[3]};
+
+    // ===== (C) Blend gradients with (biased+EMA) weights =====
     Eigen::RowVector2d dphi_dc1 = Eigen::RowVector2d::Zero();
     Eigen::RowVector2d dphi_dc2 = Eigen::RowVector2d::Zero();
     double dphi_dth1 = 0.0, dphi_dth2 = 0.0;
-    for (int k = 0; k < 4; ++k)
-    {
+    for (int k=0;k<4;++k){
         dphi_dc1 += w[k] * gg[k].dc1;
         dphi_dc2 += w[k] * gg[k].dc2;
-        dphi_dth1 += w[k] * gg[k].dth1;
-        dphi_dth2 += w[k] * gg[k].dth2;
+        // keep θ grads zero for now (you zero θ columns below)
     }
 
-    // Residual r = sqrt((d_safe - φ)^2 + eps_h^2) / d_safe
-    // → dr/dx = (1/d_safe) * ( (z/r) * (-dφ/dx) )
-    // We also skip if φ > d_safe (factor inactive)
-    // Recompute φ to get z (or reuse m,Z above)
-    const double phi = m + std::log(std::max(Z, 1e-12)) / beta;
-    if (phi > safety_distance_)
-    {
-        this->skip_flag = true;
-        return J; // all zeros
-    }
-    this->skip_flag = false;
+    // ===== (D) Same z/s/sig/gate as residual path (USE φ_g) =====
+    const double z   = safety_distance_ - phi_g;
+    const double s   = z / tau_d_;
+    const double sig = 1.0 / (1.0 + std::exp(-s));
+    const double gate = 1.0 / (1.0 + std::exp((phi_g - (safety_distance_ + 2.0*tau_d_)) / (0.5*tau_d_)));
+    const double scale = -gate * (sig / std::max(1e-9, safety_distance_));
 
-    const double z = safety_distance_ - phi;
-    const double r = std::sqrt(z * z + eps_h * eps_h);
-    const double inv_sd = 1.0 / std::max(1e-9, safety_distance_);
-    const double scale = inv_sd * (z / std::max(r, 1e-12)) * (-1.0);
-    const double alpha = 10.0;
-    // double kth = 1.0 / (1.0 + std::exp(-alpha * z));
-    double kth = 1.0;
-
-    // Fill Jacobian (position + heading if present). Velocity columns remain 0.
-    // Box 1: x,y,(vx,vy),theta
-    J(0, 0) = scale * dphi_dc1.x() * kth;
-    J(0, 1) = scale * dphi_dc1.y() * kth;
-    // if (n0 >= 5) J(0, 4) = scale * dphi_dth1 * kth;
+    // ===== (E) Fill J (θ columns kept 0 for now) =====
+    J(0, 0)      = scale * dphi_dc1.x();
+    J(0, 1)      = scale * dphi_dc1.y();
     if (n0 >= 5) J(0, 4) = 0.0;
 
-    // Box 2 starts at column n0
-    J(0, n0 + 0) = scale * dphi_dc2.x() * kth;
-    J(0, n0 + 1) = scale * dphi_dc2.y() * kth;
-    // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2 * kth;
-    if (n1 >= 5) J(0, n0 + 4) = 0.0;
+    J(0, n0+0)   = scale * dphi_dc2.x();
+    J(0, n0+1)   = scale * dphi_dc2.y();
+    if (n1 >= 5) J(0, n0+4) = 0.0;
+
+    // --- Debug (print the ACTUAL weights used) ---
+    if (dbg){
+        int kmax = 0; for (int k=1;k<4;++k) if (w[k] > w[kmax]) kmax = k;
+        std::ostringstream oss;
+        oss << "[DEBUG] [J] ts" << variables_[0]->ts_ << "," << variables_[1]->ts_
+            << " phi_g=" << phi_g
+            << " z=" << z
+            << " s=" << s
+            << " sig=" << sig
+            << " J_norm=" << J.row(0).norm()
+            << " gate=" << gate
+            << " gaps=["<<g[0]<<","<<g[1]<<","<<g[2]<<","<<g[3]<<"]"
+            << " gb=["<<gb[0]<<","<<gb[1]<<","<<gb[2]<<","<<gb[3]<<"]"
+            << " w=["<<w[0]<<","<<w[1]<<","<<w[2]<<","<<w[3]<<"]"
+            << " kmax=" << kmax;
+        print(oss.str());
+    }
+
+    if (gate < 1e-6) { w_prev_ = {0.25, 0.25, 0.25, 0.25}; }
 
     return J;
 }
+
+// Eigen::MatrixXd InterrobotFactor::J_func_(const Eigen::VectorXd &X)
+// {
+//     const int n0 = variables_[0]->n_dofs_;
+//     const int n1 = variables_[1]->n_dofs_;
+
+//     Eigen::MatrixXd J = Eigen::MatrixXd::Zero(1, n0 + n1);
+
+//     // State slices
+//     const Eigen::Vector2d c1 = X.segment<2>(0);
+//     const Eigen::Vector2d c2 = X.segment<2>(n0);
+//     const double th1 = (n0 >= 5 ? wrapAngle(X(4)) : 0.0);
+//     const double th2 = (n1 >= 5 ? wrapAngle(X(n0 + 4)) : 0.0);
+
+//     // OBB params with your offsets
+//     const Eigen::Vector2d e1 = 0.5 * robot1_dimensions_;
+//     const Eigen::Vector2d e2 = 0.5 * robot2_dimensions_;
+//     const double o1 = wrapAngle(th1 + robot1_angle_offset_);
+//     const double o2 = wrapAngle(th2 + robot2_angle_offset_);
+
+//     OBB2D obb1(c1, e1, o1);
+//     OBB2D obb2(c2, e2, o2);
+
+//     const auto axes1 = obb1.getAxes();
+//     const auto axes2 = obb2.getAxes();
+//     const Eigen::Vector2d a1x = axes1.first,  a1y = axes1.second;
+//     const Eigen::Vector2d a2x = axes2.first,  a2y = axes2.second;
+
+//     const Eigen::Vector2d d = c2 - c1;
+
+//     // Smoothing constants
+//     const double eps_abs = 1e-6;
+//     const double eps_h = 1e-6;
+//     const double beta = 3.0;
+
+//     auto sabs = [&](double t)
+//     { return std::sqrt(t * t + eps_abs * eps_abs); };
+//     auto sgns = [&](double t)
+//     { return t / std::sqrt(t * t + eps_abs * eps_abs); }; // d/dt |t|
+
+//     // Axis derivative helpers: for your getAxes(), d/dθ of the two axes is:
+//     // ∂a_x/∂θ = +a_y,   ∂a_y/∂θ = -a_x
+//     auto dn_dth_box1 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
+//     {
+//         // if n==a1x → -a1y; if n==a1y → a1x; else 0
+//         if ((n - a1x).squaredNorm() < 1e-18) return -a1y;
+//         if ((n - a1y).squaredNorm() < 1e-18) return  a1x;
+//         return Eigen::Vector2d::Zero();
+//     };
+//     auto dn_dth_box2 = [&](const Eigen::Vector2d &n) -> Eigen::Vector2d
+//     {
+//         // if n==a2x → -a2y; if n==a2y → a2x; else 0
+//         if ((n - a2x).squaredNorm() < 1e-18) return -a2y;
+//         if ((n - a2y).squaredNorm() < 1e-18) return  a2x;
+//         return Eigen::Vector2d::Zero();
+//     };
+
+//     // E(ax, ay, e; n) = e.x*|ax·n| + e.y*|ay·n|
+//     auto extent = [&](const Eigen::Vector2d &n,
+//                       const Eigen::Vector2d &ax, const Eigen::Vector2d &ay,
+//                       const Eigen::Vector2d &e) -> double
+//     {
+//         return e.x() * sabs(ax.dot(n)) + e.y() * sabs(ay.dot(n));
+//     };
+
+//     // s(n) = |d·n| - (E1(n)+E2(n))
+//     struct SGrad
+//     {
+//         double s;
+//         Eigen::RowVector2d dc1;
+//         Eigen::RowVector2d dc2;
+//         double dth1;
+//         double dth2;
+//     };
+
+//     auto dsep = [&](const Eigen::Vector2d &n) -> SGrad
+//     {
+//         SGrad out;
+//         out.s = 0.0;
+//         out.dc1.setZero();
+//         out.dc2.setZero();
+//         out.dth1 = 0.0;
+//         out.dth2 = 0.0;
+
+//         // Scalar parts
+//         const double t = d.dot(n);
+//         const double T = sabs(t);
+//         const double dt = sgns(t); // dT/dt
+
+//         // Extents
+//         const double ax1 = a1x.dot(n), ay1 = a1y.dot(n);
+//         const double ax2 = a2x.dot(n), ay2 = a2y.dot(n);
+//         const double E1 = e1.x() * sabs(ax1) + e1.y() * sabs(ay1);
+//         const double E2 = e2.x() * sabs(ax2) + e2.y() * sabs(ay2);
+
+//         out.s = T - (E1 + E2);
+
+//         // Position grads (treat n as fixed for pos — standard SAT linearization)
+//         // dT/dc1 = dT/dt * d·n/dc1 = dt * (-n),   dT/dc2 = dt * (+n)
+//         out.dc1 = (-dt) * n.transpose();
+//         out.dc2 = (+dt) * n.transpose();
+
+//         // Heading grads: two effects:
+//         // (i) when n comes from that box, n rotates: dT/dθ = dt * d·(dn/dθ)
+//         // (ii) E-terms change via d(ax·n)/dθ and d(ay·n)/dθ
+//         // Box1:
+//         {
+//             const Eigen::Vector2d dn1 = dn_dth_box1(n); // zero unless n is a1x/a1y
+//             double dE1_dth1 = 0.0;
+//             // d(ax1·n)/dθ1 = (∂a1x/∂θ1)·n + a1x·(∂n/∂θ1)
+//             // But when n==a1x or a1y, E1 becomes constant wrt θ1 (unit axis aligns),
+//             // so we can safely ignore the tiny residual term (kept general below):
+//             const double dax1 = (-a1y).dot(n);    // (∂a1x/∂θ1)·n
+//             const double day1 = ( a1x).dot(n); // (∂a1y/∂θ1)·n
+//             const double sgn_ax1 = sgns(ax1);
+//             const double sgn_ay1 = sgns(ay1);
+//             // If n rotates (dn1!=0), additional terms from n in dot-products:
+//             const double ax1_n = a1x.dot(dn1);
+//             const double ay1_n = a1y.dot(dn1);
+//             // dE1_dth1 = e1.x() * sgn_ax1 * (dax1 + ax1_n) + e1.y() * sgn_ay1 * (day1 + ay1_n);
+//             dE1_dth1 = e1.x()*sgn_ax1 *dax1 + e1.y()*sgn_ay1*day1;
+
+//             // E2 depends on θ1 only via n (if n==a1x/a1y):
+//             const double sgn_ax2 = sgns(ax2);
+//             const double sgn_ay2 = sgns(ay2);
+//             const double ax2_n = a2x.dot(dn1);
+//             const double ay2_n = a2y.dot(dn1);
+//             const double dE2_dth1 = e2.x() * sgn_ax2 * ax2_n + e2.y() * sgn_ay2 * ay2_n;
+
+//             // T term via n (only if n from box1): dT/dθ1 = dt * d·(dn1)
+//             const double dT_dth1 = dt * d.dot(dn1);
+
+//             // out.dth1 = dT_dth1 - (dE1_dth1 + dE2_dth1);
+//             out.dth1 =-dE1_dth1;
+//         }
+
+//         // Box2:
+//         {
+//             const Eigen::Vector2d dn2 = dn_dth_box2(n); // zero unless n is a2x/a2y
+//             double dE2_dth2 = 0.0;
+
+//             const double dax2 = (-a2y).dot(n);    // (∂a2x/∂θ2)·n
+//             const double day2 = ( a2x).dot(n); // (∂a2y/∂θ2)·n
+//             const double sgn_ax2 = sgns(ax2);
+//             const double sgn_ay2 = sgns(ay2);
+//             const double ax2_n = a2x.dot(dn2);
+//             const double ay2_n = a2y.dot(dn2);
+//             // dE2_dth2 = e2.x() * sgn_ax2 * (dax2 + ax2_n) + e2.y() * sgn_ay2 * (day2 + ay2_n);
+//             dE2_dth2 = e2.x()*sgn_ax2*dax2 + e2.y()*sgn_ay2*day2;
+
+//             // E1 depends on θ2 only via n (if n==a2x/a2y):
+//             const double sgn_ax1 = sgns(ax1);
+//             const double sgn_ay1 = sgns(ay1);
+//             const double ax1_n = a1x.dot(dn2);
+//             const double ay1_n = a1y.dot(dn2);
+//             const double dE1_dth2 = e1.x() * sgn_ax1 * ax1_n + e1.y() * sgn_ay1 * ay1_n;
+
+//             const double dT_dth2 = dt * d.dot(dn2);
+
+//             // out.dth2 = dT_dth2 - (dE1_dth2 + dE2_dth2);
+//             out.dth2 = -dE1_dth2;
+//         }
+
+//         return out;
+//     };
+
+//     // Compute per-axis gaps and grads
+//     SGrad gg[4];
+//     gg[0] = dsep(a1x);
+//     gg[1] = dsep(a1y);
+//     gg[2] = dsep(a2x);
+//     gg[3] = dsep(a2y);
+
+//     double g[4];
+//     for (int k = 0; k < 4; ++k)
+//         g[k] = gg[k].s;
+
+//     // Softmax weights w_k for φ = smoothmax(g_k)
+//     double m = std::max(std::max(g[0], g[1]), std::max(g[2], g[3]));
+//     double Z = 0.0;
+//     for (int k = 0; k < 4; ++k)
+//         Z += std::exp(beta * (g[k] - m));
+//     double w[4];
+//     for (int k = 0; k < 4; ++k)
+//         w[k] = std::exp(beta * (g[k] - m)) / std::max(Z, 1e-12);
+
+//     // dφ/dx = ∑_k w_k * dg_k/dx
+//     Eigen::RowVector2d dphi_dc1 = Eigen::RowVector2d::Zero();
+//     Eigen::RowVector2d dphi_dc2 = Eigen::RowVector2d::Zero();
+//     double dphi_dth1 = 0.0, dphi_dth2 = 0.0;
+//     for (int k = 0; k < 4; ++k)
+//     {
+//         dphi_dc1 += w[k] * gg[k].dc1;
+//         dphi_dc2 += w[k] * gg[k].dc2;
+//         dphi_dth1 += w[k] * gg[k].dth1;
+//         dphi_dth2 += w[k] * gg[k].dth2;
+//     }
+
+//     // Residual r = sqrt((d_safe - φ)^2 + eps_h^2) / d_safe
+//     // → dr/dx = (1/d_safe) * ( (z/r) * (-dφ/dx) )
+//     // We also skip if φ > d_safe (factor inactive)
+//     // Recompute φ to get z (or reuse m,Z above)
+//     const double phi = m + std::log(std::max(Z, 1e-12)) / beta;
+//     if (phi > safety_distance_ + 3.0 * tau_d_)
+//     {
+//         this->skip_flag = true;
+//         return J; // all zeros
+//     }
+//     this->skip_flag = false;
+
+//     const double z = safety_distance_ - phi;
+//     const double s = z / tau_d_;
+//     const double sig = 1.0 / (1.0 + std::exp(-s));
+//     // const double scale = -(sig / std::max(1e-9, safety_distance_));
+//     const double gate = 1.0 / (1.0 + std::exp((phi - (safety_distance_ + 2.0*tau_d_)) / (0.5*tau_d_)));
+//     const double scale = -gate * (sig / std::max(1e-9, safety_distance_));
+
+//     // const double r = std::sqrt(z * z + eps_h * eps_h);
+//     // const double inv_sd = 1.0 / std::max(1e-9, safety_distance_);
+//     // const double scale = inv_sd * (z / std::max(r, 1e-12)) * (-1.0);
+//     // const double alpha = 10.0;
+//     // double kth = 1.0 / (1.0 + std::exp(-alpha * z));
+//     // double kth = 1.0;
+
+//     // Fill Jacobian (position + heading if present). Velocity columns remain 0.
+//     // Box 1: x,y,(vx,vy),theta
+//     J(0, 0) = scale * dphi_dc1.x();
+//     J(0, 1) = scale * dphi_dc1.y();
+//     // if (n0 >= 5) J(0, 4) = scale * dphi_dth1 * kth;
+//     if (n0 >= 5) J(0, 4) = 0.0;
+
+//     // Box 2 starts at column n0
+//     J(0, n0 + 0) = scale * dphi_dc2.x();
+//     J(0, n0 + 1) = scale * dphi_dc2.y();
+//     // if (n1 >= 5) J(0, n0 + 4) = scale * dphi_dth2 * kth;
+//     if (n1 >= 5) J(0, n0 + 4) = 0.0;
+
+//     if (dbg) {
+//         auto v0 = variables_[0];
+//         auto v1 = variables_[1];
+//         double Zg = 0.0, w[4];
+//         for (int k=0;k<4;++k) { w[k] = std::exp(beta*(g[k]-m)); Zg += w[k]; }
+//         for (int k=0;k<4;++k) w[k] /= std::max(Zg, 1e-12);
+//         int kmax = 0; for (int k=1;k<4;++k) if (w[k] > w[kmax]) kmax = k;
+//         std::ostringstream oss;
+//         oss << "[DEBUG] [J] ts" <<  v0->ts_ << "," << v1->ts_
+//             << " phi=" << phi
+//             << " z=" << z
+//             << " s=" << s
+//             << " sig=" << sig
+//             << " J_norm=" << J.row(0).norm()
+//             << " gate=" << gate
+//             << " gaps=["<<g[0]<<","<<g[1]<<","<<g[2]<<","<<g[3]<<"]"
+//             << " w=["<<w[0]<<","<<w[1]<<","<<w[2]<<","<<w[3]<<"]"
+//             << " kmax=" << kmax;
+//         print(oss.str());
+//     }
+
+//     return J;
+// }
 
 
 bool InterrobotFactor::skip_factor()
@@ -847,7 +1256,7 @@ void InterrobotFactor::draw()
             prev_J(0, n0+1) = 1.0 / safety_distance_ / r * diff(1);
         }
 
-        printf("[DEBUG] ts=%d,%d, c1=%f,%f, c2=%f,%f, th=%f,%f, h=%f, J=[%f,%f,%f,%f,%f//%f,%f,%f,%f,%f], prev_h=%f, prev_J=[%f,%f//%f,%f]\n", v_0->ts_, v_1->ts_, c1.x(), c1.y(), c2.x(), c2.y(), o1, o2, h(0, 0), J(0,0), J(0,1), J(0,2), J(0,3), J(0,4), J(0,5), J(0,6), J(0,7), J(0,8), J(0,9), prev_h, prev_J(0, 0), prev_J(0, 1), prev_J(0, n0), prev_J(0, n0+1));
+        // printf("[DEBUG] ts=%d,%d, c1=%f,%f, c2=%f,%f, th=%f,%f, h=%f, J=[%f,%f,%f,%f,%f//%f,%f,%f,%f,%f], prev_h=%f, prev_J=[%f,%f//%f,%f]\n", v_0->ts_, v_1->ts_, c1.x(), c1.y(), c2.x(), c2.y(), o1, o2, h(0, 0), J(0,0), J(0,1), J(0,2), J(0,3), J(0,4), J(0,5), J(0,6), J(0,7), J(0,8), J(0,9), prev_h, prev_J(0, 0), prev_J(0, 1), prev_J(0, n0), prev_J(0, n0+1));
         dbg = true;
     }
 

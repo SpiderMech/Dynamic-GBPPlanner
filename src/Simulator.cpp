@@ -100,7 +100,7 @@ void Simulator::timestep()
     if (!(globals.SIM_MODE == Timestep || globals.SIM_MODE == Iterate))
         return;
 
-    // Process spawn requests from createOrDeleteRobots/Obstacles
+    // Process spawn requests from createOrDeleteRobots/Obstacles (used for junction twoway  formation)
     processSpawnRequests();
 
     // Create and/or destory factors depending on a robot's neighbours
@@ -443,10 +443,15 @@ void Simulator::createOrDeleteRobots()
     if (globals.FORMATION == "playground")
     {
         new_robots_needed_ = globals.NEW_ROBOTS_NEEDED;
-        std::deque<Eigen::VectorXd> wps1{
-            Eigen::VectorXd{{0.0, 25.0, 0.0, (double)globals.MAX_SPEED, 0.0}},
-            Eigen::VectorXd{{0.0,-25.0, 0.0, (double)globals.MAX_SPEED, 0.0}}};
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
+        // std::deque<Eigen::VectorXd> wps1{
+        //     Eigen::VectorXd{{0.0, 25.0, 0.0, (double)globals.MAX_SPEED, 0.0}},
+        //     Eigen::VectorXd{{0.0,-25.0, 0.0, (double)globals.MAX_SPEED, 0.0}}};
+        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
+
+        // std::deque<Eigen::VectorXd> wps1{
+        //     Eigen::VectorXd{{25.0, 0.0, 0.0, -(double)globals.MAX_SPEED, 0.0}},
+        //     Eigen::VectorXd{{-25.0, 0.0, 0.0,-(double)globals.MAX_SPEED, 0.0}}};
+        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
 
         std::deque<Eigen::VectorXd> wps2{
             Eigen::VectorXd{{-25.0, 0.0, (double)globals.MAX_SPEED, 0.0, 0.0}},
@@ -595,54 +600,6 @@ void Simulator::createOrDeleteRobots()
             }
         }
 
-        // if (clock_ % 20 == 0) // TODO: Switch to a PoissonSpawner
-        // { // Arbitrary condition on the simulation time to create new robots
-            
-        //     int road = random_int(0, n_roads - 1);
-        //     int lane = random_int(0, n_lanes - 1);
-        //     int turn = random_int(0, 2); // 0 = left, 1 = straight, 2 = right
-
-        //     Eigen::Matrix<double, 5, 5> rot = Eigen::Matrix<double, 5, 5>::Identity();
-        //     double angle = PI / 2. * road;
-        //     double c = std::cos(angle);
-        //     double s = std::sin(angle);
-        //     rot.block<2, 2>(0, 0) << c, -s, s, c;
-        //     rot.block<2, 2>(2, 2) << c, -s, s, c;
-           
-        //     double lane_v_offset = (0.5 * (1 - 2. * n_lanes) + lane) * lane_width + 1.0;
-        //     double lane_h_offset = (1 - turn) * (0.5 + lane - n_lanes) * lane_width;
-
-        //     starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., lane_v_offset, globals.MAX_SPEED, 0., 0.}};
-        //     turning = rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, (turn % 2) * globals.MAX_SPEED, (turn - 1) * globals.MAX_SPEED, 0.}};
-        //     ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * globals.WORLD_SZ * 1., lane_v_offset + (turn - 1) * globals.WORLD_SZ * 1., 0., 0., 0.}};
-        //     std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
-            
-        //     // Color robot_color = globals.EVAL ? BLUE : ColorFromHSV(turn * 120., 1., 0.75);
-            
-        //     // auto robot = std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, globals.ROBOT_RADIUS, robot_color);
-        //     // robots_to_create.push_back(robot);
-        //     // // Set up metrics for this robot
-        //     // if (globals.EVAL) {
-        //     //     metrics->setBaselinePathLength(robot->rid_, robot->base_path_length_);
-        //     //     int finish_idx = (turn + road) % 4;
-        //     //     metrics->setFinishLine(robot->rid_, finish_lines[finish_idx].first, finish_lines[finish_idx].second);
-        //     // }
-        //     // WARNING: Cannot create more than one spawn requests per tick for SpawnGate to work properly
-        //     SpawnRequest req;
-        //     req.type = SpawnType::Robot;
-        //     req.zone_id = road;
-        //     req.t_req = globals.TIMESTEP * clock_;
-        //     req.pos = starting.head<2>();
-        //     req.orientation = 0.0;
-        //     req.half_extents = Eigen::Vector2d::Constant(globals.ROBOT_RADIUS);
-        //     req.waypoints = waypoints;
-        //     req.robot_type = RobotType::SPHERE;
-        //     req.robot_radius = globals.ROBOT_RADIUS;
-        //     req.robot_color = globals.EVAL ? BLUE : ColorFromHSV(turn * 120., 1., 0.75);
-
-        //     spawn_gates_[req.zone_id].enqueue(req);
-        // }
-
         // Delete robots if out of bounds
         for (auto [rid, robot] : robots_)
         {
@@ -689,18 +646,20 @@ void Simulator::createOrDeleteObstacles()
 
     if (globals.FORMATION == "playground")
     {
-        // new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
-        // std::deque<Eigen::VectorXd> wps;
+        new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
+        std::deque<Eigen::VectorXd> wps;
         // Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5);
-        // wp1 << -10., -5., 1., 0., 0.;
+        Eigen::VectorXd wp1(5);
+        wp1 << 0., 0., 0., -1., 0.;
         // wp2 <<   0., -5., 1., 0., 0.;
         // wp3 <<   0.,  5., 0., 1., 0.;
         // wp4 << -10.,  5., -1., 0., 0.;
         // wps = {wp1, wp2, wp3, wp4};
-        // auto model = graphics->obstacleModels_[ObstacleType::VAN];
-        // // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
-        // auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
-        // obs_to_create.push_back(obs);
+        wps = {wp1};
+        auto model = graphics->obstacleModels_[ObstacleType::VAN];
+        // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
+        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
+        obs_to_create.push_back(obs);
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -1126,9 +1085,9 @@ void Simulator::detectCollisions()
                 if (seen_pairs_.count(pair_id) == 0) {
                     // Check if collision should be ignored due to spawn zone
                     printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f], theta_o=[%f]\n", current_time, rid, oid, robot_pos.x(), robot_pos.y(), obs_theta);
-                    obstacle->geom_->color = RED;
-                    globals.LAST_SIM_MODE = Iterate;
-                    globals.SIM_MODE = SimNone;
+                    // obstacle->geom_->color = RED;
+                    // globals.LAST_SIM_MODE = Iterate;
+                    // globals.SIM_MODE = SimNone;
                     seen_pairs_.insert(pair_id);
                     metrics->markCollision(rid, current_time);                    
                 }
