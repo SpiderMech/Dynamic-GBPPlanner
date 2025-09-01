@@ -83,10 +83,29 @@ inline double wrapAngle(double angle) {
     return angle - M_PI;
 }
 
+inline double angle_diff(double a, double b)
+{
+    double d = a - b;
+    return std::atan2(std::sin(d), std::cos(d));
+}
+
+inline double vel_to_theta(double vx, double vy, double default_theta){
+    // double vmag = std::hypot(vx, vy);
+    // const double gate = 0.12 * globals.MAX_SPEED;
+    // if (vmag > gate) {
+    //     return wrapAngle(-std::atan2(vy, vx));
+    // }
+    if (std::abs(vx) > 1e-6 || std::abs(vy) > 1e-6) return wrapAngle(-std::atan2(vy, vx)); // Y-down
+    return default_theta;
+};
+
 /***************************************************************************************************************/
 // RANDOM NUMBER GENERATORS
 /***************************************************************************************************************/
-inline std::mt19937 rng(static_cast<std::mt19937::result_type>(globals.SEED));
+inline std::mt19937 rng;
+
+// Function to reseed the random number generator
+void reseed_rng(int new_seed);
 
 int random_int(int lower, int upper);
 

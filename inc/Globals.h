@@ -28,6 +28,7 @@ class Globals {
     MODES_LIST SIM_MODE = Timestep;                         // Simulation mode to begin with
     MODES_LIST LAST_SIM_MODE = Timestep;                    // Storage of Simulation mode (if time is paused eg.)
     bool EVAL = false;                                      // If running in eval mode
+    std::string EXPERIMENT_NAME;
     
     // Display parameters
     bool DISPLAY;                                           // Show display or not
@@ -46,6 +47,7 @@ class Globals {
     float TIMESTEP;                                         // Simulation timestep [s]
     int MAX_TIMESTEP;                                       // Exit simulation if more timesteps than this
     float MAX_TIME;                                         // Exit simulation if more time [s] than this or globals.TIMESTEP * timesteps, which ever is earlier
+    float WARMUP_TIME;                                      // [s] Time after to compute evaluation metrics
     bool NEW_OBSTACLES_NEEDED;                              // Whether to generate new obstacles
     bool NEW_ROBOTS_NEEDED;                                 // Whether to generate new robots   
     int NUM_ROBOTS;                                         // Number of robots (if no new robots are to be added)
@@ -80,6 +82,16 @@ class Globals {
     bool ENABLE_BUSES = true;                       // Enable/disable bus obstacles
     bool ENABLE_VANS = true;                        // Enable/disable van obstacles  
     bool ENABLE_PEDESTRIANS = true;                 // Enable/disable pedestrian obstacles
+    
+    // Spawn parameters for junction_twoway formation
+    float ROBOT_SPAWN_MEAN_RATE;                   // Mean rate (seconds) for robot spawning in junction_twoway
+    float ROBOT_SPAWN_MIN_HEADWAY;                 // Minimum headway (seconds) between robot spawns
+    float BUS_SPAWN_MEAN_RATE;                     // Mean rate (seconds) for bus obstacle spawning
+    float BUS_SPAWN_MIN_HEADWAY;                   // Minimum headway (seconds) between bus spawns
+    float VAN_SPAWN_MEAN_RATE;                     // Mean rate (seconds) for van obstacle spawning
+    float VAN_SPAWN_MIN_HEADWAY;                   // Minimum headway (seconds) between van spawns
+    float PEDESTRIAN_SPAWN_MEAN_RATE;              // Mean rate (seconds) for pedestrian obstacle spawning
+    float PEDESTRIAN_SPAWN_MIN_HEADWAY;            // Minimum headway (seconds) between pedestrian spawns
     
     Globals();
     int parse_global_args(DArgs::DArgs& dargs);

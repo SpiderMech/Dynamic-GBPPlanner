@@ -17,17 +17,18 @@ struct MotionOptions
     uint32_t last_spawn_time_ = -1000;
     int spawn_interval_;
     float elevation_;
+    Color color_ = GRAY;  // Color for this specific obstacle instance
 
     // Constructor for cuboid obstacles
     MotionOptions(float width, float height, float depth, float elevation, int spawn_interval, Graphics *graphics_ptr, std::deque<Eigen::VectorXd> waypoints={}, Color color=GRAY, double default_angle_offset=0.0)
-        : elevation_(elevation), spawn_interval_(spawn_interval), waypoints_(waypoints)
+        : elevation_(elevation), spawn_interval_(spawn_interval), waypoints_(waypoints), color_(color)
     {
         geom_ = graphics_ptr->createBoxObstacleModel(width, height, depth, default_angle_offset, color);
     }
 
     // Constructor for imported obstacles
     MotionOptions(std::string_view mesh_file, float elevation, int spawn_interval, Graphics *graphics_ptr, std::deque<Eigen::VectorXd> waypoints={}, Color color=GRAY, bool use_bbox=true, double default_angle_offset=0.0)
-        : elevation_(elevation), spawn_interval_(spawn_interval), waypoints_(waypoints)
+        : elevation_(elevation), spawn_interval_(spawn_interval), waypoints_(waypoints), color_(color)
     {
         geom_ = graphics_ptr->createCustomObstacleModel(mesh_file, default_angle_offset, color, use_bbox);
     }
@@ -47,10 +48,13 @@ struct NeighbourHit {
 /**************************************************************************************/
 class DynamicObstacle
 {
+public:
+    ObstacleType obstacle_type_ = ObstacleType::CUBE; // Type of this obstacle
+    
 private:
     Eigen::Matrix4d P_curr_ = Eigen::Matrix4d::Zero(); // State covariance at current tick (x, y, vx, vy)
     std::map<int, Eigen::Matrix2d> pos_covariances_;   // Lookahead timestep position covariance (same index as states_)
-    double sigma_acc_ = 0.0001;                           // White-noise acceleration [m/s^2]
+    double sigma_acc_ = 0.001;                           // White-noise acceleration [m/s^2]
 
     // Discrete constant-velocity model matrices
     static Eigen::Matrix4d Fcv(double dt) {             
@@ -75,7 +79,9 @@ private:
 public:
     DynamicObstacle(int oid,
                     std::deque<Eigen::VectorXd> waypoints,
-                    std::shared_ptr<ObstacleModelInfo> geom);
+                    std::shared_ptr<ObstacleModelInfo> geom,
+                    Color color = GRAY,
+                    ObstacleType type = ObstacleType::CUBE);
     ~DynamicObstacle();
 
     std::shared_ptr<ObstacleModelInfo> geom_;   // Pointer to the obstacle's model info with KDTree support
@@ -83,7 +89,6 @@ public:
     Eigen::VectorXd state_;                     // Stores the current position, velocity and orientation (i.e., [x, y, xdot, ydot, theta]) of the dynamic obstacle in world frame.
     std::map<int, Eigen::VectorXd> states_;     // Map of (robot) variable timestep to future obstacle state positions with orientation.
     std::vector<int> variable_timesteps_;       // List of (robot) variable timesteps.
-    Eigen::Vector3d centre_;                    // The centre of the obstacle in world frame.
     float orientation_ = 0.0;                   // Current orientation of the obstacle in radians
     bool completed_ = false;                     // Whether the obstacle has completed it's path.
     float spawn_time_ = 0.0;                    // Time when the obstacle was spawned (in seconds)
@@ -93,6 +98,7 @@ public:
     float dec_tau_ = 12.0f;                     // Seconds to decelerate to ~63% target velocity of the next waypoint. Also used to predict future state.
     float thresh_ = 0.5;                        // Distance threshold for considering waypoint as reached. Also used to predict future state.
     float pause_timer_ = 0.f;                   // A countdown timer for pause motion [seconds]. To suspend obstacle motion, set (xdot, ydot) as (-1000, pause_time [seconds]).
+    Color color_ = GRAY;                        // Color for this specific obstacle instance
 
     // Update current position
     void updateObstacleState();
@@ -115,9 +121,6 @@ public:
     // Drawing function
     void draw();
 
-    // Functions for generating waypoints for specific scenarios
-    static std::vector<std::deque<Eigen::VectorXd>> GenPedWaypoints(int n);
-    
     // Junction waypoint generation functions
     static std::deque<Eigen::VectorXd> generateBusWaypoints(int road, int turn, int lane, 
                                                              double world_sz, double max_speed,

@@ -65,7 +65,37 @@ Graphics::Graphics(Image obstacleImg) : obstacleImg_(ImageCopy(obstacleImg))
 
 Graphics::~Graphics()
 {
+    // Only cleanup if display was enabled
+    if (!globals.DISPLAY)
+        return;
+        
+    // Unload texture
     UnloadTexture(texture_img_);
+    
+    // Unload ground model
+    UnloadModel(groundModel_);
+    
+    // Unload shader
+    UnloadShader(lightShader_);
+    
+    // Unload obstacle image
+    UnloadImage(obstacleImg_);
+    
+    // Unload all robot models
+    for (auto& [type, modelInfo] : robotModels_) {
+        if (modelInfo) {
+            UnloadModel(modelInfo->model);
+        }
+    }
+    robotModels_.clear();
+    
+    // Unload all obstacle models
+    for (auto& [type, modelInfo] : obstacleModels_) {
+        if (modelInfo) {
+            UnloadModel(modelInfo->model);
+        }
+    }
+    obstacleModels_.clear();
 };
 
 /******************************************************************************************/

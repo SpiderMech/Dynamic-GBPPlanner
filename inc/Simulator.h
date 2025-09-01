@@ -15,7 +15,6 @@
 #include <GeometryUtils.h>
 #include <gbp/Variable.h>
 #include <nanoflann.h>
-#include <TaskScheduler.h>
 
 #include <raylib.h>
 #include <rlights.h>
@@ -45,9 +44,6 @@ public:
 
     // Pointer to Graphics class which hold all the camera, graphics and models for display
     Graphics* graphics;
-
-    // Pointer to task scheduler interface
-    TaskScheduler* scheduler;
 
     // kd-tree to store the positions of the robots at each timestep.
     // This is used for calculating the neighbours of robots blazingly fast.
@@ -79,7 +75,9 @@ public:
                                                                  // a pair of factors is created (one belonging to each robot). This becomes a redundancy.
 
     MetricsCollector* metrics;                                   // Helper class to record metrics during evaluation
-    std::vector<SpawnGate> spawn_gates_;                         // Vector of structures SpawnGate that helps prevent collision-spawning 
+    std::vector<SpawnGate> spawn_gates_;                         // Vector of structures SpawnGate that helps prevent collision-spawning
+    bool robots_initialised_;                                    // Flag for initialisations related to robots
+    bool obstacles_initialised_;                                 // Flag for initialisations related to robots
 
     /*******************************************************************************/
     // Set up environment related structures based on formation
@@ -123,6 +121,11 @@ public:
     // (Updates the neighbours_ of a robot)
     /*******************************************************************************/    
     void calculateRobotNeighbours(std::map<int,std::shared_ptr<Robot>>& robots);
+    
+    /*******************************************************************************/
+    // Update robot positions and reindx KD-Tree
+    /*******************************************************************************/    
+    void updateRobotKDTree(std::map<int, std::shared_ptr<Robot>> &robots);
 
     /*******************************************************************************/
     // Handles keypresses and mouse input, and updates camera.

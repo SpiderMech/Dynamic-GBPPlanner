@@ -17,6 +17,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     ASSETS_DIR = j["ASSETS_DIR"];
     N_DOFS = j.value("N_DOFS", 4);
     EVAL = static_cast<bool>((int)j.value("EVAL", 0));
+    EXPERIMENT_NAME = j.value("EXPERIMENT_NAME", "");
     VERBOSE = static_cast<bool>((int)j.value("VERBOSE", 0));
 
     // Display parameters
@@ -35,6 +36,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     TIMESTEP = j["TIMESTEP"];
     MAX_TIME = static_cast<float>(j["MAX_TIME"]);
     MAX_TIMESTEP = j["MAX_TIMESTEP"];
+    WARMUP_TIME = j.value("WARMUP_TIME", 30.f);
     NEW_OBSTACLES_NEEDED = static_cast<bool>((int)j["NEW_OBSTACLES_NEEDED"]);
     NEW_ROBOTS_NEEDED = static_cast<bool>((int)j["NEW_ROBOTS_NEEDED"]);
     NUM_ROBOTS = j["NUM_ROBOTS"];
@@ -66,6 +68,16 @@ void Globals::parse_global_args(std::ifstream& config_file){
     ENABLE_BUSES = static_cast<bool>((int)j.value("ENABLE_BUSES", 1));
     ENABLE_VANS = static_cast<bool>((int)j.value("ENABLE_VANS", 1));
     ENABLE_PEDESTRIANS = static_cast<bool>((int)j.value("ENABLE_PEDESTRIANS", 1));
+    
+    // Spawn parameters for junction_twoway formation
+    ROBOT_SPAWN_MEAN_RATE = j.value("ROBOT_SPAWN_MEAN_RATE", 5.0);
+    ROBOT_SPAWN_MIN_HEADWAY = j.value("ROBOT_SPAWN_MIN_HEADWAY", 1.0);
+    BUS_SPAWN_MEAN_RATE = j.value("BUS_SPAWN_MEAN_RATE", 50.0);
+    BUS_SPAWN_MIN_HEADWAY = j.value("BUS_SPAWN_MIN_HEADWAY", 20.0);
+    VAN_SPAWN_MEAN_RATE = j.value("VAN_SPAWN_MEAN_RATE", 40.0);  // 0.8 * 50.0
+    VAN_SPAWN_MIN_HEADWAY = j.value("VAN_SPAWN_MIN_HEADWAY", 16.0);  // 0.8 * 20.0
+    PEDESTRIAN_SPAWN_MEAN_RATE = j.value("PEDESTRIAN_SPAWN_MEAN_RATE", 0.01);
+    PEDESTRIAN_SPAWN_MIN_HEADWAY = j.value("PEDESTRIAN_SPAWN_MIN_HEADWAY", 0.0);
 }
 
 Globals::Globals(){};

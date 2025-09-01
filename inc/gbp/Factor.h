@@ -171,11 +171,16 @@ class DynamicObstacleFactor : public Factor
     float robot_radius_;
     double safety_distance_;
     std::vector<NeighbourHit> neighbours_;
+    Eigen::Vector2d robot_dimensions_;
+    double robot_angle_offset_;
+    double tau_d_;
+    std::array<double,4> w_prev_ = {0.25, 0.25, 0.25, 0.25};
     
 public:
     std::shared_ptr<DynamicObstacle> obs_;
     DynamicObstacleFactor(int f_id, int r_id, std::vector<std::shared_ptr<Variable>> variables, int n_dofs,
-                          float sigma, const Eigen::VectorXd &measurement, float robot_radius, std::shared_ptr<DynamicObstacle> obs);
+                          float sigma, const Eigen::VectorXd &measurement, float robot_radius, std::shared_ptr<DynamicObstacle> obs,
+                          const Eigen::Vector2d& robot_dims = Eigen::Vector2d::Zero(), double robot_a_of = 0.0);
 
     double gaussianRBF(double dist_squared) const { return std::exp(-globals.RBF_GAMMA * dist_squared); }
     Eigen::MatrixXd h_func_(const Eigen::VectorXd &X) override;

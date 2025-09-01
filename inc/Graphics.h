@@ -101,6 +101,7 @@ public:
     // Helper functions for model management
     void loadRobotModels();     // Load all robot models and compute their bounding boxes
     void loadObstacleModels();  // Load all obstacle models and compute their bounding boxes
+    void loadHeadlessModelInfo(); // Load minimal model info for headless mode
     
     // Helper functions for creating obstacle models
     BoundingBox computeMeshBoundingBox(const Mesh& mesh);  // Compute minimal bounding box for a mesh

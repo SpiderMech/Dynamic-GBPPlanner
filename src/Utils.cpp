@@ -104,6 +104,10 @@ void draw_info(uint32_t time_cnt){
 /***************************************************************************************************************/
 // RANDOM NUMBER GENERATORS
 /***************************************************************************************************************/
+void reseed_rng(int new_seed) {
+    rng.seed(static_cast<std::mt19937::result_type>(new_seed));
+}
+
 int random_int(int lower, int upper) {
     return std::uniform_int_distribution<int>(lower, upper)(rng);
 }

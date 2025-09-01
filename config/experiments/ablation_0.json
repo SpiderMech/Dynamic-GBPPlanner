@@ -4,7 +4,7 @@
   "N_DOFS": 4,
   "EVAL": 1,
   "VERBOSE": 0,
-  "EXPERIMENT_NAME": "junction_twoway",
+  "EXPERIMENT_NAME": "ablation_no_do_fac",
   
   "#": "Display parameters",
   "DISPLAY": 1,
@@ -18,8 +18,7 @@
   "##": "Simulation parameters",
   "SEED": 2,
   "TIMESTEP": 0.1,
-  "WARMUP_TIME": 1.0,
-  "MAX_TIME": 20,
+  "MAX_TIME": 210,
   "MAX_TIMESTEP": 10000,
   "NEW_OBSTACLES_NEEDED": 1,
   "NEW_ROBOTS_NEEDED": 1,
@@ -39,7 +38,7 @@
   "SIGMA_FACTOR_OBSTACLE": 0.001,
   "SIGMA_FACTOR_DYNAMIC_OBSTACLE": 0.001,
   "NUM_ITERS": 1,
-  "USE_DYNAMIC_OBS_FAC": 1,
+  "USE_DYNAMIC_OBS_FAC": 0,
   
   "####": "Dynamic obstacle parameters",
   "RBF_GAMMA": 0.8,
@@ -51,12 +50,12 @@
   "ENABLE_PEDESTRIANS": 1,
 
   "#####": "Spawning parameters",
-  "ROBOT_SPAWN_MEAN_RATE": 2.2,
+  "ROBOT_SPAWN_MEAN_RATE": 6.0,
   "ROBOT_SPAWN_MIN_HEADWAY": 0.6,
-  "BUS_SPAWN_MEAN_RATE": 7.8,
+  "BUS_SPAWN_MEAN_RATE": 20.0,
   "BUS_SPAWN_MIN_HEADWAY": 2.5,
-  "VAN_SPAWN_MEAN_RATE": 7.8,
+  "VAN_SPAWN_MEAN_RATE": 20.0,
   "VAN_SPAWN_MIN_HEADWAY": 2.5,
-  "PEDESTRIAN_SPAWN_MEAN_RATE": 2.7,
+  "PEDESTRIAN_SPAWN_MEAN_RATE": 10.0,
   "PEDESTRIAN_SPAWN_MIN_HEADWAY": 1.5
 }

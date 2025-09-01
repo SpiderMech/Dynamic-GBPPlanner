@@ -6,6 +6,8 @@
 /**************************************************************************************/
 #define RLIGHTS_IMPLEMENTATION // needed to be defined once for the lights shader
 #include <iostream>
+#include <vector>
+#include <string>
 #include <Utils.h>
 
 #include <DArgs.h>
@@ -18,32 +20,40 @@ Globals globals;
 
 int main(int argc, char *argv[]){
     
-    srand((int)globals.SEED);                                   // Initialise random seed   
-    DArgs::DArgs dargs(argc, argv);                             // Parse config file argument --cfg <file.json>
+    DArgs::DArgs dargs(argc, argv);
     if (globals.parse_global_args(dargs)) return EXIT_FAILURE;  
     
+    std::vector<int> seeds = {globals.SEED , globals.SEED + 1, globals.SEED + 2, globals.SEED + 3, globals.SEED + 4};
     
-    Simulator* sim = new Simulator();       // Initialise the simulator
-    globals.RUN = true;
-    sim->setupEnvironment();
-    
-    while (globals.RUN){
+    for (int seed_idx = 0; seed_idx < seeds.size(); seed_idx++) {
+        int current_seed = seeds[seed_idx];
+        reseed_rng(current_seed);
         
-        sim->eventHandler();                // Capture keypresses or mouse events             
-        sim->createOrDeleteObstacles();
-        sim->createOrDeleteRobots();    
-        sim->timestep();
-        sim->draw();
-
+        std::string experiment_name = globals.EXPERIMENT_NAME + "_" + std::to_string(current_seed);
+        printf("Running experiment %s [SEED: %d]\n", globals.EXPERIMENT_NAME.c_str(), current_seed);
+        
+        Simulator* sim = new Simulator();
+        globals.RUN = true;
+        sim->setupEnvironment();
+        
+        // Main simulation loop with timestep limit
+        while (globals.RUN) {
+            sim->eventHandler();    // Capture keypresses or mouse events             
+            sim->createOrDeleteObstacles();
+            sim->createOrDeleteRobots();    
+            sim->timestep();
+            sim->draw();
+        }
+        
+        if (globals.EVAL) {
+            auto R = sim->metrics->computeResults();
+            printResults(R);
+            sim->metrics->exportSummaryToCSV(experiment_name);
+        }
+        
+        delete sim;
     }
-
-    if (globals.EVAL) {
-        auto R = sim->metrics->computeResults();
-        printResults(R);
-        sim->metrics->exportAllCSV("test");
-    }
-
-    delete sim;
-
+    
+    print("All experiments completed!");
     return 0;
 }    

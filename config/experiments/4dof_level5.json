@@ -4,7 +4,7 @@
   "N_DOFS": 4,
   "EVAL": 1,
   "VERBOSE": 0,
-  "EXPERIMENT_NAME": "junction_twoway",
+  "EXPERIMENT_NAME": "4dof_level5",
   
   "#": "Display parameters",
   "DISPLAY": 1,
@@ -16,10 +16,9 @@
   "DRAW_FACTORS": 0,
   
   "##": "Simulation parameters",
-  "SEED": 2,
+  "SEED": 12,
   "TIMESTEP": 0.1,
-  "WARMUP_TIME": 1.0,
-  "MAX_TIME": 20,
+  "MAX_TIME": 210,
   "MAX_TIMESTEP": 10000,
   "NEW_OBSTACLES_NEEDED": 1,
   "NEW_ROBOTS_NEEDED": 1,
@@ -42,7 +41,7 @@
   "USE_DYNAMIC_OBS_FAC": 1,
   
   "####": "Dynamic obstacle parameters",
-  "RBF_GAMMA": 0.8,
+  "RBF_GAMMA": 1.0,
   "NUM_NEIGHBOURS": 3,
   "OBSTALCE_SENSOR_RADIUS": 10.0,
   "DEFAULT_OBS_SPEED": 1.2,
@@ -51,12 +50,12 @@
   "ENABLE_PEDESTRIANS": 1,
 
   "#####": "Spawning parameters",
-  "ROBOT_SPAWN_MEAN_RATE": 2.2,
+  "ROBOT_SPAWN_MEAN_RATE": 2.0,
   "ROBOT_SPAWN_MIN_HEADWAY": 0.6,
-  "BUS_SPAWN_MEAN_RATE": 7.8,
+  "BUS_SPAWN_MEAN_RATE": 6.7,
   "BUS_SPAWN_MIN_HEADWAY": 2.5,
-  "VAN_SPAWN_MEAN_RATE": 7.8,
+  "VAN_SPAWN_MEAN_RATE": 6.7,
   "VAN_SPAWN_MIN_HEADWAY": 2.5,
-  "PEDESTRIAN_SPAWN_MEAN_RATE": 2.7,
+  "PEDESTRIAN_SPAWN_MEAN_RATE": 3.0,
   "PEDESTRIAN_SPAWN_MIN_HEADWAY": 1.5
 }

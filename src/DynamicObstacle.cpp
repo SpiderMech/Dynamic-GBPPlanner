@@ -7,8 +7,10 @@
 
 DynamicObstacle::DynamicObstacle(int oid,
                                  std::deque<Eigen::VectorXd> waypoints,
-                                 std::shared_ptr<ObstacleModelInfo> geom)
-    : oid_(oid), waypoints_(waypoints), geom_(std::move(geom))
+                                 std::shared_ptr<ObstacleModelInfo> geom,
+                                 Color color,
+                                 ObstacleType type)
+    : oid_(oid), waypoints_(waypoints), geom_(std::move(geom)), color_(color), obstacle_type_(type)
 {
     auto start = waypoints_.front();
     // Check if this waypoint has a pause time (5th dimension > 0)
@@ -25,7 +27,7 @@ DynamicObstacle::DynamicObstacle(int oid,
     Eigen::Vector2d velocity(start(2), start(3));
     if (velocity.norm() > 1e-6)
     {
-        orientation_ = -wrapAngle(std::atan2(start(3), start(2))); // Store in Y-down convention
+        orientation_ = wrapAngle(-std::atan2(start(3), start(2))); // Store in Y-down convention
         state_(4) = orientation_;
     }
 
@@ -123,7 +125,7 @@ void DynamicObstacle::rollCovariancesFromCurrent()
 /***************************************************************************************************/
 const Eigen::Matrix2d* DynamicObstacle::getPosCovPtrAtDt(float delta_t) const
 {
-    int ts = static_cast<int>(delta_t / globals.T0);
+    int ts = static_cast<int>(std::lround(delta_t / globals.T0));
     auto it = pos_covariances_.find(ts);
     if (it == pos_covariances_.end()) return nullptr;
     return &it->second;
@@ -133,7 +135,7 @@ const Eigen::Matrix2d* DynamicObstacle::getPosCovPtrAtDt(float delta_t) const
 /***************************************************************************************************/
 std::pair<Eigen::Matrix3f, Eigen::VectorXd> DynamicObstacle::getLocalToWorldTransform(const float delta_t) const
 {
-    int ts = static_cast<int>(delta_t / globals.T0);
+    int ts = static_cast<int>(std::lround(delta_t / globals.T0));
     Eigen::VectorXd s = states_.at(ts);
 
     // Create transformation matrix with rotation and translation
@@ -259,7 +261,7 @@ Eigen::VectorXd DynamicObstacle::getNextState(Eigen::VectorXd state, float delta
         // Update orientation based on velocity (only if moving)
         if (new_vel.norm() > 1e-6)
         {
-            s(4) = -wrapAngle(std::atan2(new_vel(1), new_vel(0)));
+            s(4) = wrapAngle(-std::atan2(new_vel(1), new_vel(0)));
         }
         // If velocity is zero, keep current orientation (s(4) unchanged)
 
@@ -287,59 +289,14 @@ void DynamicObstacle::draw()
         // Add the model's default offset (similar to robots)
         float rotation_degrees = rotation * (180.0f / M_PI);
 
-        // Use DrawModelEx to include rotation
+        // Use DrawModelEx to include rotation with instance-specific color
         DrawModelEx(geom_->model,
                     Vector3{(float)state_[0], -geom_->boundingBox.min.y, (float)state_[1]},
                     Vector3{0.0f, 1.0f, 0.0f}, // Rotate around Y axis
                     rotation_degrees,          // Rotation angle in degrees
                     Vector3{1.0f, 1.0f, 1.0f}, // Scale
-                    geom_->color);             // Color tint
+                    color_);                   // Use instance-specific color tint
     }
-}
-
-/***************************************************************************************************/
-// Functions for generating waypoints for specific scenarios
-/***************************************************************************************************/
-std::vector<std::deque<Eigen::VectorXd>> DynamicObstacle::GenPedWaypoints(int n)
-{
-    std::vector<std::deque<Eigen::VectorXd>> waypoints_vec;
-    if (globals.FORMATION == "junction_twoway")
-    {
-        int n_lanes = 2;
-        double lane_width = 4. * globals.ROBOT_RADIUS;
-        double road_half_width = n_lanes * lane_width;
-        double spawn_offset = globals.ROBOT_RADIUS; // offset just outside the road edge
-        double border = road_half_width + spawn_offset;
-        double world_half = globals.WORLD_SZ / 2.;
-
-        for (int i = 0; i < n; ++i)
-        {
-            bool horizontal = random_int(0, 1) == 1;
-            double speed = double(random_float(float(globals.DEFAULT_OBS_SPEED), 2.f));
-            double side = (random_int(0, 1) == 1) ? 1.0 : -1.0;
-            double pos = (random_int(0, 1) == 0) ? random_float(-world_half, -road_half_width)
-                                                 : random_float(road_half_width, world_half);
-            Eigen::VectorXd start(5), end(5);
-            if (horizontal)
-            {
-                // Crossing a horizontal road: vary x, spawn above or below
-                double z0 = side * border;
-                start << pos, z0, 0.0, -side * speed, 0.0; // 5th dimension (pause time) = 0
-                end << pos, -z0, 0.0, -side * speed, 0.0;  // 5th dimension (pause time) = 0
-            }
-            else
-            {
-                // Crossing a vertical road: vary z, spawn left or right
-                double x0 = side * border;
-                start << x0, pos, -side * speed, 0.0, 0.0; // 5th dimension (pause time) = 0
-                end << -x0, pos, -side * speed, 0.0, 0.0;  // 5th dimension (pause time) = 0
-            }
-            waypoints_vec.emplace_back();
-            waypoints_vec.back().push_back(start);
-            waypoints_vec.back().push_back(end);
-        }
-    }
-    return waypoints_vec;
 }
 
 /***************************************************************************************************/
@@ -361,7 +318,7 @@ std::deque<Eigen::VectorXd> DynamicObstacle::generateBusWaypoints(int road, int 
     rot.block<2, 2>(2, 2) << c, -s, s, c;
 
     // Calculate lane offsets
-    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width + 1.0;
+    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width;
     double lane_h_offset = (1 - turn) * (0.5 + lane - n_lanes) * lane_width;
 
     // Define key waypoints
@@ -426,7 +383,7 @@ std::deque<Eigen::VectorXd> DynamicObstacle::generateVanWaypoints(int lane,
     double junction_edge = 2.0 * lane_width;
     double segment_length = world_sz / 2.0 - junction_edge;
     const int n_roads = 4, n_lanes = 2;
-    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width + 1.0;
+    double lane_v_offset = (0.5 * (1 - 2.0 * n_lanes) + lane) * lane_width;
     double lane_h_offset = (0.5 - n_lanes) * lane_width;
     
     std::deque<Eigen::VectorXd> delivery_points;
