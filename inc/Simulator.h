@@ -29,6 +29,7 @@ class DynamicObstacle;
 class Graphics;
 class TreeOfRobots;
 class MetricsCollector;
+struct MotionOptions;
 
 /************************************************************************************/
 // The main Simulator. This is where the magic happens.
@@ -50,6 +51,10 @@ public:
     typedef KDTreeMapOfVectorsAdaptor<std::map<int,std::vector<double>>> KDTree;
     std::map<int, std::vector<double>> robot_positions_{{0,{0.,0.}}};
     KDTree* treeOfRobots_;
+    
+    // Spawn processing methods (moved from lambdas for efficiency)
+    bool isSpawnClear(const SpawnRequest& r, double margin);
+    bool admitSpawnRequest(const SpawnRequest& r);
 
     // Image representing the obstacles in the environment
     Image obstacleImg;
@@ -78,6 +83,13 @@ public:
     std::vector<SpawnGate> spawn_gates_;                         // Vector of structures SpawnGate that helps prevent collision-spawning
     bool robots_initialised_;                                    // Flag for initialisations related to robots
     bool obstacles_initialised_;                                 // Flag for initialisations related to robots
+    
+    std::vector<PoissonSpawner> robot_spawners_;                 // Robot spawners for junction_twoway formation
+    std::vector<MotionOptions> motion_options_;                  // Motion options for obstacle formations
+    std::vector<PoissonSpawner> bus_spawners_;                   // Bus obstacle spawners
+    std::vector<PoissonSpawner> van_spawners_;                   // Van obstacle spawners
+    PoissonSpawner pedestrian_spawner_;                          // Pedestrian obstacle spawner
+    std::unordered_set<uint64_t> seen_collision_pairs_;         // Track seen collision pairs
 
     /*******************************************************************************/
     // Set up environment related structures based on formation

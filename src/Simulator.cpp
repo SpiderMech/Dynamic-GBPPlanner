@@ -19,17 +19,27 @@ using Clock = std::chrono::high_resolution_clock;
 using Duration = std::chrono::duration<double, std::milli>;
 
 /*******************************************************************************/
-// Raylib setup
+// Simulator setup (window initialization moved to main.cpp)
 /*******************************************************************************/
 Simulator::Simulator()
 {
-    SetTraceLogLevel(LOG_ERROR);
-    if (globals.DISPLAY)
-    {
-        SetTargetFPS(60);
-        InitWindow(globals.SCREEN_SZ, globals.SCREEN_SZ, globals.WINDOW_TITLE);
-    }
-
+    // Reset sim state
+    robots_initialised_ = false;
+    obstacles_initialised_ = false;
+    next_rid_ = 0;
+    next_oid_ = 0;
+    next_fid_ = 0;
+    next_vid_ = 0;
+    clock_ = 0;
+    metrics = nullptr;
+    
+    seen_collision_pairs_.clear();
+    motion_options_.clear();
+    spawn_gates_.clear();
+    robot_spawners_.clear();
+    bus_spawners_.clear();
+    van_spawners_.clear();
+    
     // Initialise kdtree for storing robot positions (needed for nearest neighbour check)
     treeOfRobots_ = new KDTree(2, robot_positions_, 50);
 
@@ -45,7 +55,7 @@ Simulator::Simulator()
 };
 
 /*******************************************************************************/
-// Destructor
+// Destructor (window cleanup moved to main.cpp)
 /*******************************************************************************/
 Simulator::~Simulator()
 {
@@ -60,7 +70,6 @@ Simulator::~Simulator()
     if (globals.DISPLAY)
     {
         delete graphics;
-        CloseWindow();
     }
     delete metrics;
 };
@@ -172,108 +181,11 @@ void Simulator::timestep()
 void Simulator::processSpawnRequests() {
     double now = clock_ * globals.TIMESTEP;
 
-    static auto isClear = [this](const SpawnRequest& r, double margin)->bool {
-        const Eigen::Vector2d p = r.pos;
-        const double r_safe = r.radius + margin;
-
-        // Check request against robots
-        if (!robots_.empty()) {
-            // Perform radius search for collision candidates
-            std::vector<double> q = {p.x(), p.y()};
-            std::vector<nanoflann::ResultItem<size_t,double>> matches;
-            nanoflann::SearchParameters params; params.sorted = false;
-            const float R2 = std::pow(r_safe * 5.0, 2.0);
-            const size_t nMatches = treeOfRobots_->index->radiusSearch(&q[0], R2, matches, params); // Ensure up-to-date
-            
-            for (size_t k = 0; k < nMatches; k++) {
-                auto it = this->robots_.begin();
-                std::advance(it, matches[k].first);
-                auto match = it->second;
-                const bool robot_are_spheres = match->robot_type_ == RobotType::SPHERE;
-                const auto match_pos = match->position_.head<2>();
-                const auto match_dims = match->robot_dimensions_;
-                const auto match_theta = match->orientation_;
-                const auto match_radius = match->robot_radius_;
-                
-                // Request is robot
-                if (r.type == SpawnType::Robot) { /* Robot-Robot */
-                    if (robot_are_spheres) { /* SPHERE-SPHERE */
-                        double center_dist = (match_pos - p).norm();
-                        double combined_radius = match_radius + r_safe;
-                        if (center_dist <= combined_radius) return false;
-                    } else { /* OBB-OBB */
-                        OBB2D match_obb(match_pos, 0.5*match_dims, match_theta);
-                        OBB2D spawn_obb(p, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
-                        if (GeometryUtils::overlapsOBB(spawn_obb, match_obb)) return false;
-                    }
-                // Request is obstacle
-                } else { /* Obstacle-Robot */
-                    OBB2D obs_obb(r.pos, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
-                    if (robot_are_spheres) { /* OBB-SPHERE */
-                        if (GeometryUtils::overlapsSphereOBB(match_pos, match_radius, obs_obb, 1e-6)) return false;
-                    } else { /* OBB-OBB */
-                        OBB2D match_obb(match_pos, 0.5*match_dims, match_theta);
-                        if (GeometryUtils::overlapsOBB(obs_obb, match_obb)) return false;
-                    }
-                }
-            }
-        }
-        
-        // Check request against obstacles
-        for (const auto& [oid, obs] : obstacles_) {
-            const Eigen::Vector2d c = obs->state_.head<2>();
-            const double o = wrapAngle(obs->orientation_+obs->geom_->orientation_offset);
-            const auto dims = obs->geom_->dimensions;
-            const Eigen::Vector2d he(dims.x*0.5, dims.z*0.5);
-            OBB2D obb(c, he, o);
-            if (r.type == SpawnType::Robot) {
-                if (GeometryUtils::overlapsSphereOBB(p, r_safe, obb, 1e-6)) return false;
-            } else {
-                OBB2D spawn_obb(p, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
-                if (GeometryUtils::overlapsOBB(spawn_obb, obb)) return false;
-            }
-        }
-
-        // All checks passed -> clear
-        return true;
-    };
-
-    static auto admit = [&](const SpawnRequest& r)->bool {
-        if (r.type == SpawnType::Robot) {
-            auto robot = std::make_shared<Robot>(this, next_rid_++, r.waypoints, r.robot_type, 1.f, r.radius, r.color);
-            robots_[robot->rid_] = robot;
-            robot_positions_[robot->rid_] = {robot->position_(0), robot->position_(1)};
-            this->treeOfRobots_->index->buildIndex(); // Needed as there may be more than one request created each time
-            if (globals.EVAL) {
-                metrics->addSample(robot->rid_, now, robot->position_.head<2>());
-                metrics->setBaselinePathLength(robot->rid_, robot->base_path_length_);
-            }
-            return true;
-        } else {
-            // Determine obstacle type from model
-            ObstacleType obs_type = ObstacleType::CUBE;
-            if (r.model == graphics->obstacleModels_[ObstacleType::BUS]) {
-                obs_type = ObstacleType::BUS;
-            } else if (r.model == graphics->obstacleModels_[ObstacleType::VAN]) {
-                obs_type = ObstacleType::VAN;
-            } else if (r.model == graphics->obstacleModels_[ObstacleType::PEDESTRIAN]) {
-                obs_type = ObstacleType::PEDESTRIAN;
-            }
-            
-            auto obs = std::make_shared<DynamicObstacle>(next_oid_++, r.waypoints, r.model, r.color, obs_type);
-            obs->spawn_time_ = now;
-            obstacles_[obs->oid_] = obs;
-            
-            // Record obstacle spawn in metrics
-            if (globals.EVAL && metrics) {
-                metrics->addObstacleSpawn(obs->oid_, obs_type, now);
-            }
-            return true;
-        }
-    };
-
     for (auto& gate : spawn_gates_) {
-        gate.process(now, admit, isClear);
+        gate.process(now, 
+            [this](const SpawnRequest& r) { return this->admitSpawnRequest(r); },
+            [this](const SpawnRequest& r, double margin) { return this->isSpawnClear(r, margin); }
+        );
     }
 }
 
@@ -417,6 +329,27 @@ void Simulator::setupEnvironment() {
             g.space_margin = 0.3;
             spawn_gates_.push_back(g);
         }
+        
+        // Initialize spawners for junction_twoway formation
+        robot_spawners_ = {
+            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r0", globals.VERBOSE},
+            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r1", globals.VERBOSE},
+            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r2", globals.VERBOSE},
+            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r3", globals.VERBOSE},
+        };
+        
+        bus_spawners_ = {
+            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r0", globals.VERBOSE},
+            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r1", globals.VERBOSE},
+            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r2", globals.VERBOSE},
+            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r3", globals.VERBOSE}
+        };
+        
+        van_spawners_ = {
+            {globals.VAN_SPAWN_MEAN_RATE, globals.VAN_SPAWN_MIN_HEADWAY, "van_r0", globals.VERBOSE}
+        };
+        
+        pedestrian_spawner_ = PoissonSpawner{globals.PEDESTRIAN_SPAWN_MEAN_RATE, globals.PEDESTRIAN_SPAWN_MIN_HEADWAY, "pedestrians", globals.VERBOSE};
 
         if (globals.EVAL) {
             // Set up metrics
@@ -549,21 +482,14 @@ void Simulator::createOrDeleteRobots()
         const Eigen::Vector2d car_he(dims.x * 0.5, dims.z * 0.5);
         const bool robot_are_spheres = globals.N_DOFS == 4;
 
-        static std::vector<PoissonSpawner> robot_spawners = {
-            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r0", globals.VERBOSE},
-            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r1", globals.VERBOSE},
-            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r2", globals.VERBOSE},
-            {globals.ROBOT_SPAWN_MEAN_RATE, globals.ROBOT_SPAWN_MIN_HEADWAY, "robot_r3", globals.VERBOSE},
-        };
-        
         if (!robots_initialised_) {
             // Set initial next_spawn, only needs to be called once
-            for (auto& spawner : robot_spawners) spawner.schedule_from(now);
+            for (auto& spawner : robot_spawners_) spawner.schedule_from(now);
             robots_initialised_ = true;
         }
 
         for (int road = 0; road < 4; ++road) {
-            if (robot_spawners[road].try_spawn(clock_ * globals.TIMESTEP)) {
+            if (robot_spawners_[road].try_spawn(clock_ * globals.TIMESTEP)) {
                 int lane = random_int(0, 1);
                 int turn = 1;
                 // int turn = random_int(0, 2); // 1=straight for the paper-style flow curve (no turns)
@@ -580,7 +506,7 @@ void Simulator::createOrDeleteRobots()
 
                 starting = rot * Eigen::VectorXd{{-globals.WORLD_SZ / 2., lane_v_offset, globals.MAX_SPEED, 0., 0.}};
                 turning = rot * Eigen::VectorXd{{lane_h_offset, lane_v_offset, (turn % 2) * globals.MAX_SPEED, (turn - 1) * globals.MAX_SPEED, 0.}};
-                ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * globals.WORLD_SZ * 1., lane_v_offset + (turn - 1) * globals.WORLD_SZ * 1., 0., 0., 0.}};
+                ending = rot * Eigen::VectorXd{{lane_h_offset + (turn % 2) * (globals.WORLD_SZ * 0.7), lane_v_offset + (turn - 1) * globals.WORLD_SZ * 1., 0., 0., 0.}};
                 std::deque<Eigen::VectorXd> waypoints{starting, turning, ending};
 
                 SpawnRequest req;
@@ -660,7 +586,6 @@ void Simulator::createOrDeleteObstacles()
     else if (globals.FORMATION == "layered_walls")
     {
         new_obstacles_needed_ = true;
-        static std::vector<MotionOptions> motion_options;
 
         // Define obstacle dimensions and path by defining MotionOptions for each obstacle
         if (!obstacles_initialised_)
@@ -681,11 +606,11 @@ void Simulator::createOrDeleteObstacles()
             mo3_wp2 << globals.WORLD_SZ / 2.f, 33.f, 1.5f, 0.f, 0.f;
             auto mo3 = MotionOptions(5.f, 5.f, 5.f, 2.5f, 200, graphics, std::deque<Eigen::VectorXd>{mo3_wp1, mo3_wp2});
 
-            motion_options = {mo1, mo2, mo3};
+            motion_options_ = {mo1, mo2, mo3};
             obstacles_initialised_ = true;
         }
 
-        for (auto &mo : motion_options)
+        for (auto &mo : motion_options_)
         {
             if (clock_ - mo.last_spawn_time_ > mo.spawn_interval_)
             {
@@ -706,7 +631,6 @@ void Simulator::createOrDeleteObstacles()
     else if (globals.FORMATION == "circle")
     {
         new_obstacles_needed_ = false;
-        static std::vector<MotionOptions> motion_options;
         
         if (!obstacles_initialised_)
         {
@@ -727,9 +651,9 @@ void Simulator::createOrDeleteObstacles()
             auto mo2 = MotionOptions(4.f, 4.f, 4.f, 2.0f, 0, graphics, std::deque<Eigen::VectorXd>{mo2_wp});
             auto mo3 = MotionOptions(3.f, 5.f, 3.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{mo3_wp});
 
-            motion_options = {mo1, mo2, mo3};
+            motion_options_ = {mo1, mo2, mo3};
 
-            for (int i = 0; i < motion_options.size(); ++i)
+            for (int i = 0; i < motion_options_.size(); ++i)
             {
                 std::deque<Eigen::VectorXd> waypoints;
                 float omega = (2.f * PI) / size;
@@ -744,12 +668,12 @@ void Simulator::createOrDeleteObstacles()
                     wp << x, y, vx, vy, 0.0; // 5th dimension (pause time) = 0
                     waypoints.emplace_back(wp);
                 }
-                motion_options[i].waypoints_ = waypoints;
+                motion_options_[i].waypoints_ = waypoints;
             }
             obstacles_initialised_ = true;
         }
 
-        for (auto &mo : motion_options)
+        for (auto &mo : motion_options_)
         {
             auto obs = std::make_shared<DynamicObstacle>(next_oid_++, mo.waypoints_, mo.geom_, mo.color_);
             obs_to_create.push_back(obs);
@@ -762,28 +686,12 @@ void Simulator::createOrDeleteObstacles()
         new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
         float now = clock_ * globals.TIMESTEP;
         
-        // Define PoissonSpawners for bus obstacles
-        static std::vector<PoissonSpawner> bus_spawners = {
-            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r0", globals.VERBOSE}, /* Road 0 */
-            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r1", globals.VERBOSE}, /* Road 1 */
-            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r2", globals.VERBOSE}, /* Road 2 */
-            {globals.BUS_SPAWN_MEAN_RATE, globals.BUS_SPAWN_MIN_HEADWAY, "bus_r3", globals.VERBOSE}  /* Road 3 */
-        };
-        
-        // Define PoissonSpawners for van obstacles (delivery vehicles)
-        static std::vector<PoissonSpawner> van_spawners = {
-            {globals.VAN_SPAWN_MEAN_RATE, globals.VAN_SPAWN_MIN_HEADWAY, "van_r0", globals.VERBOSE}, /* Road 0 */
-        };
-        
-        // Define PoissonSpawner for pedestrian obstacles
-        static PoissonSpawner pedestrian_spawner = {globals.PEDESTRIAN_SPAWN_MEAN_RATE, globals.PEDESTRIAN_SPAWN_MIN_HEADWAY, "pedestrians", globals.VERBOSE};
-
         // Set initial next_spawn, only needs to be called once
         if (!obstacles_initialised_)
         {
-            for (auto& spawner : bus_spawners) spawner.schedule_from(now);
-            for (auto& spawner : van_spawners) spawner.schedule_from(now);
-            pedestrian_spawner.schedule_from(now);
+            for (auto& spawner : bus_spawners_) spawner.schedule_from(now);
+            for (auto& spawner : van_spawners_) spawner.schedule_from(now);
+            pedestrian_spawner_.schedule_from(now);
             obstacles_initialised_ = true;
         }
 
@@ -791,10 +699,10 @@ void Simulator::createOrDeleteObstacles()
         int n_roads = 4, n_lanes = 2;
         double lane_width = 4. * globals.ROBOT_RADIUS;
         
-        // Static lambda for creating obstacle spawn requests
-        static auto makeObstacleSpawnRequest = [](double now, int zone_id, 
-                                                  const std::deque<Eigen::VectorXd>& waypoints,
-                                                  std::shared_ptr<ObstacleModelInfo> model) -> SpawnRequest {
+        // Lambda for creating obstacle spawn requests
+        auto makeObstacleSpawnRequest = [](double now, int zone_id, 
+                                          const std::deque<Eigen::VectorXd>& waypoints,
+                                          std::shared_ptr<ObstacleModelInfo> model) -> SpawnRequest {
         
             const Eigen::VectorXd start = waypoints.front();
             SpawnRequest req;
@@ -812,8 +720,8 @@ void Simulator::createOrDeleteObstacles()
         
         // Spawn buses (if enabled)
         if (globals.ENABLE_BUSES) {
-            for (int road = 0; road < bus_spawners.size(); ++road) {
-                if (bus_spawners[road].try_spawn(now)) {
+            for (int road = 0; road < bus_spawners_.size(); ++road) {
+                if (bus_spawners_[road].try_spawn(now)) {
                     // Random turn (0=left, 1=straight, 2=right) and lane
                     int turn = random_int(0, 2);
                     int lane = 0; // busses only go on outer lanes
@@ -831,8 +739,8 @@ void Simulator::createOrDeleteObstacles()
         
         // Spawn vans with delivery behavior (if enabled)
         if (globals.ENABLE_VANS) {
-            for (int road = 0; road < van_spawners.size(); ++road) {
-                if (van_spawners[road].try_spawn(now)) {
+            for (int road = 0; road < van_spawners_.size(); ++road) {
+                if (van_spawners_[road].try_spawn(now)) {
                     auto waypoints = DynamicObstacle::generateVanWaypoints(
                         0, globals.WORLD_SZ, globals.MAX_SPEED, 4. * globals.ROBOT_RADIUS
                     );
@@ -845,7 +753,7 @@ void Simulator::createOrDeleteObstacles()
         
         // Spawn pedestrians (if enabled)
         if (globals.ENABLE_PEDESTRIANS) {
-            if (pedestrian_spawner.try_spawn(now)) {
+            if (pedestrian_spawner_.try_spawn(now)) {
                 // Generate a single pedestrian crossing waypoint
                 auto waypoints = DynamicObstacle::generatePedestrianWaypoints(
                     globals.WORLD_SZ, globals.DEFAULT_OBS_SPEED, 4. * globals.ROBOT_RADIUS
@@ -901,11 +809,10 @@ void Simulator::deleteRobot(std::shared_ptr<Robot> robot)
 /*******************************************************************************/
 void Simulator::detectCollisions()
 {
-    // Static set to track seen collision pairs
-    static std::unordered_set<uint64_t> seen_pairs_;
-    if (clock_ == 0) seen_pairs_.clear();
+    // Clear seen collision pairs at the start of each simulation
+    if (clock_ == 0) seen_collision_pairs_.clear();
     // unique key for a pair of IDs
-    static auto pairKey = [](int a, int b) -> uint64_t {
+    auto pairKey = [](int a, int b) -> uint64_t {
         const uint32_t x = static_cast<uint32_t>(a < b ? a : b);
         const uint32_t y = static_cast<uint32_t>(a < b ? b : a);
         return (static_cast<uint64_t>(x) << 32) | y;
@@ -955,14 +862,16 @@ void Simulator::detectCollisions()
             double distance = (pos_j - pos_i).norm();
             
             // Calculate interaction radius for this neighbor pair
-            double R_in; double buffer = metrics->interaction_radius_buffer_;
+            double R_in;
             if (robots_are_spheres) {
-                R_in = radius_i + radius_j + buffer; // combined radii + buffer
+                R_in = radius_i + radius_j; // combined radii + buffer
             } else {
                 double robot_j_diag = robot_j->robot_dimensions_.norm() * 0.5;
                 double robot_i_diag = robot_i->robot_dimensions_.norm() * 0.5;
-                R_in = robot_i_diag + robot_j_diag + buffer; // combined diagonal half extents + buffer
+                R_in = robot_i_diag + robot_j_diag; // combined diagonal half extents + buffer
             }
+            double buffer =  R_in * 0.5;
+            R_in += buffer;
             
             bool in = (distance <= R_in);
             bool was_in = track.robots_inside.count(rid_j) > 0;
@@ -981,7 +890,7 @@ void Simulator::detectCollisions()
             
             // Skip collision check if we've already checked this pair
             uint64_t pair_id = pairKey(rid_i, rid_j);
-            if (seen_pairs_.count(pair_id) > 0) continue;
+            if (seen_collision_pairs_.count(pair_id) > 0) continue;
             
             bool collision = false;
             
@@ -1000,9 +909,9 @@ void Simulator::detectCollisions()
             if (collision) {
                 // Mark collision for both robots
                 Eigen::Vector2d collision_pos = (pos_i + pos_j) * 0.5;  // Midpoint of collision
-                seen_pairs_.insert(pair_id);
-                metrics->markCollision(rid_i, now);
-                metrics->markCollision(rid_j, now);
+                seen_collision_pairs_.insert(pair_id);
+                metrics->markCollision(rid_i, now, collision_pos);
+                metrics->markCollision(rid_j, now, collision_pos);
                 // Debug
                 bool connected = std::find(robot_i->connected_r_ids_.begin(), robot_i->connected_r_ids_.end(), rid_j) != robot_i->connected_r_ids_.end();
                 printf("CollisionEvent<Robot, Robot, %f>: ids=[%d, %d], pos1=[%f, %f], pos2=[%f, %f], comms_active=[%d, %d], connected=[%d]\n", 
@@ -1051,13 +960,15 @@ void Simulator::detectCollisions()
             auto& track = metrics->getTrack(rid);
             auto& new_obstacle_encounters = all_new_obstacle_encounters[rid];
             
-            double R_in; double buffer = metrics->interaction_radius_buffer_;
+            double R_in;
             if (robots_are_spheres) {
-                R_in = robot_radius + obs_bounding_radius + buffer;
+                R_in = robot_radius + obs_bounding_radius;
             } else {
                 double robot_diag = robot->robot_dimensions_.norm() * 0.5;
-                R_in = robot_diag + obs_bounding_radius + buffer;
+                R_in = robot_diag + obs_bounding_radius;
             }
+            double buffer = R_in * 0.5;
+            R_in += buffer;
             
             bool in = (distance <= R_in);
             bool was_in = track.obstacles_inside.count(oid) > 0;
@@ -1076,7 +987,7 @@ void Simulator::detectCollisions()
             
             // Skip collision checks if seen
             uint64_t pair_id = pairKey(-oid, rid);
-            if (seen_pairs_.count(pair_id) > 0) continue;
+            if (seen_collision_pairs_.count(pair_id) > 0) continue;
 
             bool collision = false;
             
@@ -1090,8 +1001,9 @@ void Simulator::detectCollisions()
             
             if (collision) {
                 // Mark robot-obstacle collision
-                seen_pairs_.insert(pair_id);
-                metrics->markCollision(rid, now);  
+                // For robot-obstacle collisions, use the robot position as collision position
+                seen_collision_pairs_.insert(pair_id);
+                metrics->markCollision(rid, now, robot_pos);  
                 // Debug                 
                 printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f], theta_o=[%f]\n", now, rid, oid, robot_pos.x(), robot_pos.y(), o);
                 obs->color_ = RED;
@@ -1104,5 +1016,115 @@ void Simulator::detectCollisions()
     for (auto& [rid, new_inside] : all_new_obstacle_encounters) {
         auto& track = metrics->getTrack(rid);
         track.obstacles_inside.swap(new_inside);
+    }
+}
+
+/*******************************************************************************/
+// Check if spawn request location is clear of collisions (class method version)
+/*******************************************************************************/
+bool Simulator::isSpawnClear(const SpawnRequest& r, double margin) {
+    const Eigen::Vector2d p = r.pos;
+    const double r_safe = r.radius + margin;
+
+    // Check request against robots
+    if (!robots_.empty()) {
+        // Perform radius search for collision candidates
+        std::vector<double> q = {p.x(), p.y()};
+        std::vector<nanoflann::ResultItem<size_t,double>> matches;
+        nanoflann::SearchParameters params; params.sorted = false;
+        const float R2 = std::pow(r_safe * 5.0, 2.0);
+        const size_t nMatches = treeOfRobots_->index->radiusSearch(&q[0], R2, matches, params);
+        
+        for (size_t k = 0; k < nMatches; k++) {
+            auto it = this->robots_.begin();
+            std::advance(it, matches[k].first);
+            auto match = it->second;
+            const bool robot_are_spheres = match->robot_type_ == RobotType::SPHERE;
+            const auto match_pos = match->position_.head<2>();
+            const auto match_dims = match->robot_dimensions_;
+            const auto match_theta = match->orientation_;
+            const auto match_radius = match->robot_radius_;
+            
+            // Request is robot
+            if (r.type == SpawnType::Robot) { /* Robot-Robot */
+                if (robot_are_spheres) { /* SPHERE-SPHERE */
+                    double center_dist = (match_pos - p).norm();
+                    double combined_radius = match_radius + r_safe;
+                    if (center_dist <= combined_radius) return false;
+                } else { /* OBB-OBB */
+                    OBB2D match_obb(match_pos, 0.5*match_dims, match_theta);
+                    OBB2D spawn_obb(p, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
+                    if (GeometryUtils::overlapsOBB(spawn_obb, match_obb)) return false;
+                }
+            // Request is obstacle
+            } else { /* Obstacle-Robot */
+                OBB2D obs_obb(r.pos, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
+                if (robot_are_spheres) { /* OBB-SPHERE */
+                    if (GeometryUtils::overlapsSphereOBB(match_pos, match_radius, obs_obb, 1e-6)) return false;
+                } else { /* OBB-OBB */
+                    OBB2D match_obb(match_pos, 0.5*match_dims, match_theta);
+                    if (GeometryUtils::overlapsOBB(obs_obb, match_obb)) return false;
+                }
+            }
+        }
+    }
+
+    // Check request against obstacles
+    if (!obstacles_.empty()) {
+        for (const auto& [oid, obs] : obstacles_) {
+            const Eigen::Vector2d c = obs->state_.head<2>();
+            const double o = wrapAngle(obs->orientation_+obs->geom_->orientation_offset);
+            const auto dims = obs->geom_->dimensions;
+            const Eigen::Vector2d he(dims.x*0.5, dims.z*0.5);
+            OBB2D obb(c, he, o);
+            if (r.type == SpawnType::Robot) {
+                if (GeometryUtils::overlapsSphereOBB(p, r_safe, obb, 1e-6)) return false;
+            } else {
+                OBB2D spawn_obb(p, r.half_extents + Eigen::Vector2d::Constant(margin), r.orientation);
+                if (GeometryUtils::overlapsOBB(spawn_obb, obb)) return false;
+            }
+        }
+    }
+    
+    // All checks passed -> clear
+    return true;
+}
+
+/*******************************************************************************/
+// Admit spawn request and create robot/obstacle (class method version)
+/*******************************************************************************/
+bool Simulator::admitSpawnRequest(const SpawnRequest& r) {
+    double now = clock_ * globals.TIMESTEP;
+    
+    if (r.type == SpawnType::Robot) {
+        auto robot = std::make_shared<Robot>(this, next_rid_++, r.waypoints, r.robot_type, 1.f, r.radius, r.color);
+        robots_[robot->rid_] = robot;
+        robot_positions_[robot->rid_] = {robot->position_(0), robot->position_(1)};
+        this->treeOfRobots_->index->buildIndex(); // Needed as there may be more than one request created each time
+        if (globals.EVAL) {
+            metrics->addSample(robot->rid_, now, robot->position_.head<2>());
+            metrics->setBaselinePathLength(robot->rid_, robot->base_path_length_);
+        }
+        return true;
+    } else {
+        // Determine obstacle type from model
+        ObstacleType obs_type = ObstacleType::CUBE;
+        if (r.model == graphics->obstacleModels_[ObstacleType::BUS]) {
+            obs_type = ObstacleType::BUS;
+        } else if (r.model == graphics->obstacleModels_[ObstacleType::VAN]) {
+            obs_type = ObstacleType::VAN;
+        } else if (r.model == graphics->obstacleModels_[ObstacleType::PEDESTRIAN]) {
+            obs_type = ObstacleType::PEDESTRIAN;
+        }
+        
+        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, r.waypoints, r.model, r.color, obs_type);
+        obs->spawn_time_ = now;
+        obstacles_[obs->oid_] = obs;
+        
+        // Record obstacle spawn in metrics
+        if (globals.EVAL && metrics) {
+            metrics->addObstacleSpawn(obs->oid_, obs_type, now);
+        }
+        return true;
     }
 }

@@ -439,7 +439,7 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
     if (n_dofs >= 5) {
         this->safety_distance_ = 1.2;
     } else {
-        float eps = 0.5 * robot_radius;
+        float eps = 0.2 * robot_radius;
         this->safety_distance_ = 2 * robot_radius + eps;
     }
     tau_d_ = 0.2 * safety_distance_;
@@ -843,7 +843,7 @@ DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std
     if (n_dofs == 5) {
         safety_distance_ = 1.5;
     } else {
-        double eps = 0.5 * robot_radius;
+        double eps = 0.2 * robot_radius;
         safety_distance_ = robot_radius_ + eps;
     }
     this->delta_jac = 1e-5;

@@ -74,6 +74,7 @@ extern "C" {            // Prevents name mangling of functions
 //----------------------------------------------------------------------------------
 Light CreateLight(int type, Vector3 position, Vector3 target, Color color, Shader shader);   // Create a light and get shader locations
 void UpdateLightValues(Shader shader, Light light);         // Send light properties to shader
+void ResetLightsCount(void);                                 // Reset the lights count (needed for multiple simulation runs)
 
 #ifdef __cplusplus
 }
@@ -179,6 +180,12 @@ void UpdateLightValues(Shader shader, Light light)
     float color[4] = { (float)light.color.r/(float)255, (float)light.color.g/(float)255, 
                        (float)light.color.b/(float)255, (float)light.color.a/(float)255 };
     SetShaderValue(shader, light.colorLoc, color, SHADER_UNIFORM_VEC4);
+}
+
+// Reset lights count to 0 (needed for multiple simulation runs)
+void ResetLightsCount(void)
+{
+    lightsCount = 0;
 }
 
 #endif // RLIGHTS_IMPLEMENTATION

@@ -5,6 +5,7 @@
 #include <Graphics.h>
 #include <tuple>
 
+
 /**************************************************************************/
 // Graphics class that deals with the nitty-gritty of display.
 // Camera is also included here. You can set different camera positions/trajectories
@@ -17,6 +18,9 @@ Graphics::Graphics(Image obstacleImg) : obstacleImg_(ImageCopy(obstacleImg))
 {
     if (!globals.DISPLAY)
         return;
+
+    // Reset the static lights count to ensure proper lighting in subsequent simulation runs
+    ResetLightsCount();
 
     // Camera is defined by a forward vector (target - position), as well as an up vector (see raylib for more info)
     // These are vectors for each camera transition. Cycle through them in the simulation with the SPACEBAR

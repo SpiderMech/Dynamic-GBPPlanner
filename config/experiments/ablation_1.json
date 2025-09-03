@@ -41,9 +41,9 @@
   "USE_DYNAMIC_OBS_FAC": 1,
   
   "####": "Dynamic obstacle parameters",
-  "RBF_GAMMA": 0.8,
+  "RBF_GAMMA": 1.0,
   "NUM_NEIGHBOURS": 3,
-  "OBSTALCE_SENSOR_RADIUS": 10.0,
+  "OBSTALCE_SENSOR_RADIUS": 20.0,
   "DEFAULT_OBS_SPEED": 1.2,
   "ENABLE_BUSES": 1,
   "ENABLE_VANS": 1,
@@ -51,7 +51,7 @@
 
   "#####": "Spawning parameters",
   "ROBOT_SPAWN_MEAN_RATE": 6.0,
-  "ROBOT_SPAWN_MIN_HEADWAY": 0.6,
+  "ROBOT_SPAWN_MIN_HEADWAY": 1.0,
   "BUS_SPAWN_MEAN_RATE": 20.0,
   "BUS_SPAWN_MIN_HEADWAY": 2.5,
   "VAN_SPAWN_MEAN_RATE": 20.0,

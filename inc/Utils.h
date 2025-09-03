@@ -128,6 +128,9 @@ struct PoissonSpawner {
     std::string name;
     bool dbg = false;
 
+    // Default constructor
+    PoissonSpawner() : mean(1.0), hmin(0.0), exp(1.0), next_spawn(0.0), name(""), dbg(false) {}
+    
     PoissonSpawner(double M, double Hmin, const std::string& n = "", bool verbose = false)
         : mean(M), hmin(Hmin), exp(1.0 / std::max(1e-6, M - Hmin)), next_spawn(0.0), name(n), dbg(verbose) {}
 

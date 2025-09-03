@@ -34,6 +34,7 @@ struct RobotTrack
     double t_start = std::numeric_limits<double>::quiet_NaN(); // First sample
     double t_end = std::numeric_limits<double>::quiet_NaN();   // Crash < last sample
     double t_first_collision = std::numeric_limits<double>::quiet_NaN(); // Time of first collision
+    Eigen::Vector2d first_collision_pos = Eigen::Vector2d(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()); // Position of first collision
     double baseline_path_length = -1.0;                        /* Used for detour ratio */
     
     // Encounter tracking per robot
@@ -375,7 +376,7 @@ public:
     }
 
 
-    void markCollision(int robot_id, double t)
+    void markCollision(int robot_id, double t, const Eigen::Vector2d &collision_pos)
     {
         // Skip if in warm-up period
         if (isInWarmupPeriod(t))
@@ -390,10 +391,11 @@ public:
         if (std::abs(t - tr.t_start) < t_min_alive)
             return;
         
-        // Track first collision time if not already set
+        // Track first collision time and position if not already set
         if (std::isnan(tr.t_first_collision))
         {
             tr.t_first_collision = t;
+            tr.first_collision_pos = collision_pos;
         }
         
         it->second.collided = true;
@@ -648,7 +650,7 @@ public:
         std::cout << "\nExporting metrics to " << filename << "...\n";
 
         // Write CSV header
-        file << "robot_id,collided,t_start_s,t_end_s,t_first_collision_s,duration_s,"
+        file << "robot_id,collided,t_start_s,t_end_s,t_first_collision_s,first_collision_pos_x_m,first_collision_pos_y_m,duration_s,"
              << "path_length_m,baseline_path_length_m,detour_ratio,ldj,"
              << "robot_encounters,obstacle_encounters,num_samples\n";
 
@@ -669,6 +671,8 @@ public:
                  << std::fixed << std::setprecision(6) << track.t_start << ","
                  << std::fixed << std::setprecision(6) << (std::isnan(track.t_end) ? track.samples.back().t : track.t_end) << ","
                  << std::fixed << std::setprecision(6) << track.t_first_collision << ","
+                 << std::fixed << std::setprecision(6) << track.first_collision_pos.x() << ","
+                 << std::fixed << std::setprecision(6) << track.first_collision_pos.y() << ","
                  << std::fixed << std::setprecision(6) << duration << ","
                  << std::fixed << std::setprecision(6) << path_length << ","
                  << std::fixed << std::setprecision(6) << track.baseline_path_length << ","
@@ -744,7 +748,7 @@ public:
     void exportAllCSV(const std::string &experiment_name = "") const
     {
         std::cout << "\nExporting metrics to CSV files...\n";
-        exportSamplesToCSV(experiment_name);
+        // exportSamplesToCSV(experiment_name);
         exportSummaryToCSV(experiment_name);
         exportExperimentMetricsToCSV(experiment_name);
         std::cout << "CSV export completed.\n";
@@ -886,6 +890,8 @@ inline void printResults(const Results &R)
             std::string type_name = obstacleTypeToString(type);
             printStat(type_name + " Crowdedness", crowdedness, std::numeric_limits<double>::quiet_NaN(), "", 6);
         }
+        printStat("Total obstacle density", R.total_obstacle_density, 0.0);
+        printStat("Total obstacle crowdedness", R.total_obstacle_crowdedness, 0.0);
     }
 
     std::cout << "\n"
