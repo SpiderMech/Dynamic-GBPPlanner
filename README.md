@@ -1,8 +1,7 @@
 # Dynamic GBPPlanner: extension of handling dynamic obstacles and anisotropic geometries.
  
- <warning> All rights reserved in accordance to the licensing regulations detailed in the original README.md file below.
- 
- <warning> Public access expires after the duration of the project.
+ warning | All rights reserved in accordance to the licensing regulations detailed in the original README.md file below. \n
+ warning | Public access expires after the duration of the project.
 ---
 # GBPPlanner: Distributing Multi-Robot Collaboration with Gaussian Belief Propagation
 This code accompanies the 2023 Robotics Automation Letters (RA-L) paper. It was also presented at ICRA 2023 (Oral).
