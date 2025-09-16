@@ -30,6 +30,7 @@ void Globals::parse_global_args(std::ifstream& config_file){
     DRAW_FACTORS = static_cast<bool>((int)j.value("DRAW_FACTORS", 0));
     DRAW_OBSTACLES = static_cast<bool>((int)j.value("DRAW_OBSTACLES", 1));
     DRAW_ROBOTS = static_cast<bool>((int)j.value("DRAW_ROBOTS", 1));
+    DRAW_TRAILS = static_cast<bool>((int)j.value("DRAW_TRAILS", 0));
 
     // Simulation parameters
     SEED = j["SEED"];

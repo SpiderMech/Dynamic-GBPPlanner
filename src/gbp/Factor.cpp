@@ -844,7 +844,7 @@ DynamicObstacleFactor::DynamicObstacleFactor(int f_id, int r_id, std::vector<std
         safety_distance_ = 1.5;
     } else {
         double eps = 0.2 * robot_radius;
-        safety_distance_ = robot_radius_ + eps;
+        safety_distance_ = robot_radius + eps;
     }
     this->delta_jac = 1e-5;
     tau_d_ = 0.2 * safety_distance_;
@@ -861,6 +861,7 @@ Eigen::MatrixXd DynamicObstacleFactor::h_func_(const Eigen::VectorXd &X)
         {
             const Eigen::Vector2d diff = x - nb.pt_world;
             const double gamma = gammaEff(nb.Sigma_pos, diff);
+            // const double gamma = globals.RBF_GAMMA;
             const double w = std::exp(-gamma * nb.dist_squared);
             acc += w;
         }
@@ -990,6 +991,7 @@ Eigen::MatrixXd DynamicObstacleFactor::J_func_(const Eigen::VectorXd &X)
         {
             const Eigen::Vector2d diff = x - nb.pt_world;
             const double gamma = gammaEff(nb.Sigma_pos, diff);
+            // const double gamma = globals.RBF_GAMMA;
             const double w = std::exp(-gamma * nb.dist_squared);
             grad_obs += -2.0 * gamma * w * diff;
         }
@@ -1181,8 +1183,11 @@ bool DynamicObstacleFactor::skip_factor()
     if (n_dofs_ == 4) {
         Eigen::Vector2d x = X_.head<2>();
         neighbours_ = obs_->getNearestPointsFromKDTree(x, globals.NUM_NEIGHBOURS, delta_t_);
+        // this->skip_flag = neighbours_.size() == 0;
+        this->skip_flag = false;
+    } else {
+        this->skip_flag = false;
     }
-    this->skip_flag = false;
     return this->skip_flag;
 }
 

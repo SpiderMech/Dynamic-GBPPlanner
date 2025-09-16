@@ -127,4 +127,86 @@ namespace GeometryUtils {
         double dist_squared = diff.squaredNorm();
         return dist_squared <= (r + eps) * (r + eps);
     }
+    
+    // Compute signed distance between sphere and OBB
+    // Positive when separated, negative when overlapping
+    inline double signedDistanceSphereOBB(Eigen::Ref<const Eigen::Vector2d> c, double r, const OBB2D& B) {
+        // Transform sphere center to OBB's local coordinate system
+        Eigen::Vector2d local_center = c - B.center;
+        auto axes = B.getAxes();
+        auto ax1 = axes.first, ax2 = axes.second;
+        Eigen::Vector2d rotated_center;
+        rotated_center.x() = local_center.dot(ax1);
+        rotated_center.y() = local_center.dot(ax2);
+        
+        // Find the closest point on the OBB in local frame
+        Eigen::Vector2d closest;
+        closest.x() = std::clamp(rotated_center.x(), -B.halfExtents.x(), B.halfExtents.x());
+        closest.y() = std::clamp(rotated_center.y(), -B.halfExtents.y(), B.halfExtents.y());
+        
+        // Calculate distance from sphere center to closest point on OBB
+        Eigen::Vector2d diff = rotated_center - closest;
+        double distance_to_surface = std::sqrt(diff.squaredNorm());
+        
+        // Check if sphere center is inside the OBB
+        bool center_inside = (std::abs(rotated_center.x()) <= B.halfExtents.x() && 
+                             std::abs(rotated_center.y()) <= B.halfExtents.y());
+        
+        if (center_inside) {
+            // Center is inside OBB, return negative distance (penetration depth)
+            // Find minimum distance to any edge
+            double dist_to_x_edge = B.halfExtents.x() - std::abs(rotated_center.x());
+            double dist_to_y_edge = B.halfExtents.y() - std::abs(rotated_center.y());
+            double min_dist_to_edge = std::min(dist_to_x_edge, dist_to_y_edge);
+            return -(min_dist_to_edge + r);  // Negative for overlap
+        } else {
+            // Center is outside OBB, return positive distance minus radius
+            return distance_to_surface - r;  // Positive when separated, negative when overlapping
+        }
+    }
+    
+    // Compute signed distance between two OBBs using SAT
+    // Positive when separated, negative when overlapping
+    inline double signedDistanceOBB(const OBB2D& obb1, const OBB2D& obb2) {
+        auto axes1 = obb1.getAxes();
+        auto axes2 = obb2.getAxes();
+        auto ax11 = axes1.first, ax12 = axes1.second;
+        auto ax21 = axes2.first, ax22 = axes2.second;
+        std::vector<Eigen::Vector2d> axes = {ax11, ax12, ax21, ax22};
+        
+        double min_positive_separation = std::numeric_limits<double>::max();
+        double max_negative_penetration = -std::numeric_limits<double>::max();
+        bool found_separating_axis = false;
+        
+        // Check separation along each axis
+        for (const auto& axis : axes) {
+            auto p1 = projectOBB(obb1, axis);
+            auto p2 = projectOBB(obb2, axis);
+            double min1 = p1.first, max1 = p1.second;
+            double min2 = p2.first, max2 = p2.second;
+            
+            if (max1 < min2) {
+                // obb1 is completely to the left of obb2 on this axis - they are separated
+                double separation = min2 - max1;
+                found_separating_axis = true;
+                min_positive_separation = std::min(min_positive_separation, separation);
+            } else if (max2 < min1) {
+                // obb2 is completely to the left of obb1 on this axis - they are separated
+                double separation = min1 - max2;
+                found_separating_axis = true;
+                min_positive_separation = std::min(min_positive_separation, separation);
+            } else {
+                // Overlapping on this axis - calculate penetration depth
+                double penetration = -std::min(max1 - min2, max2 - min1);
+                max_negative_penetration = std::max(max_negative_penetration, penetration);
+            }
+        }
+        
+        // If we found any separating axis, the OBBs are separated
+        if (found_separating_axis) {
+            return min_positive_separation;  // Return minimum positive separation
+        } else {
+            return max_negative_penetration; // Return maximum (least) negative penetration
+        }
+    }
 }

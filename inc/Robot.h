@@ -66,6 +66,10 @@ public:
     Eigen::Vector2d prev_RA_ = Eigen::Vector2d(
         std::numeric_limits<double>::quiet_NaN(),
         std::numeric_limits<double>::quiet_NaN());
+    
+    // Trail functionality
+    std::deque<Eigen::Vector2d> position_trail_; // Store previous positions for trail rendering
+    static const int MAX_TRAIL_LENGTH = 1000;     // Maximum number of trail positions to store
 
 
     /****************************************/
@@ -76,6 +80,12 @@ public:
 
     /* Change the prior of the Horizon state */    
     void updateHorizon();
+
+    /* Detect slign shot states */
+    bool isSlignshot();
+    
+    /* Reinitialise variable chain */
+    void reinitialiseVariables(Eigen::Ref<const Eigen::Vector2d> anchor);
 
     /***************************************************************************************************/
     // For new neighbours of a robot, create inter-robot factors if they don't exist. 

@@ -232,6 +232,7 @@ void Graphics::loadRobotModels()
                 bbox.max.y - bbox.min.y,
                 bbox.max.z - bbox.min.z
             };
+            print(dims.x, dims.z);
             
             // Store in map
             robotModels_[type] = std::make_shared<RobotModelInfo>(model, bbox, dims, of);

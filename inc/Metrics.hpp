@@ -37,6 +37,9 @@ struct RobotTrack
     Eigen::Vector2d first_collision_pos = Eigen::Vector2d(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()); // Position of first collision
     double baseline_path_length = -1.0;                        /* Used for detour ratio */
     
+    // Minimum clearance tracking
+    double min_clearance = std::numeric_limits<double>::max(); // Minimum distance to any obstacle/robot
+    
     // Encounter tracking per robot
     std::unordered_set<int> robots_inside;           // robot IDs currently inside interaction radius
     std::unordered_map<int, double> robot_last_event; // refractory timer per robot
@@ -92,6 +95,22 @@ struct ObstacleTypeMetrics
 };
 
 /***************************************************************************************************/
+/* Collision event structures */
+/***************************************************************************************************/
+struct CollisionEvent
+{
+    double time;
+    Eigen::Vector2d position;
+    int robot_id;
+    int collision_partner_id;  // Other robot ID or negative obstacle ID
+    bool is_robot_robot_collision;  // true if robot-robot, false if robot-obstacle
+    double robot_density;      // robots per unit area at collision time
+    double obstacle_density;   // obstacles per unit area at collision time
+    size_t total_robots_alive; // total robots alive at collision time
+    size_t total_obstacles_alive; // total obstacles alive at collision time
+};
+
+/***************************************************************************************************/
 /* Support stat structures */
 /***************************************************************************************************/
 struct SummaryStats
@@ -126,6 +145,8 @@ struct Results
     SummaryStats distance_median_iqr;
     SummaryStats ldj_median_iqr;
     SummaryStats detour_ratio_median_iqr; // if baselines provided (NaN if not available)
+    SummaryStats min_clearance_median_iqr; // minimum clearance statistics
+    SummaryStats baseline_path_median_iqr; // baseline path length statistics
 
     // Scalars
     double normalized_collisions; // collided_robots / total_robots_spawned
@@ -225,12 +246,13 @@ private:
     const double area_eff = 2944.0; // 16 * 100 * 2 - 16^2 (junction_twoway experiment)
     
     // Encounter tracking parameters
-    
     std::unordered_map<int, RobotTrack> tracks_;
     std::unordered_map<int, ObstacleLifecycleInfo> obstacle_tracks_;
     std::unordered_map<ObstacleType, ObstacleTypeMetrics> obstacle_type_metrics_;
     double last_obstacle_sample_time_ = std::numeric_limits<double>::quiet_NaN();
     double obstacle_sample_interval_ = 1.0;
+    
+    std::vector<CollisionEvent> collision_events_;
     
     bool flow_enabled_ = true;
     FlowMeter flow_in_ns_;
@@ -274,6 +296,20 @@ public:
     void setBaselinePathLength(int robot_id, double L_min)
     {
         tracks_[robot_id].baseline_path_length = L_min;
+    }
+    
+    // Update minimum clearance for a robot
+    void updateMinClearance(int robot_id, double clearance)
+    {
+        auto it = tracks_.find(robot_id);
+        if (it != tracks_.end())
+        {
+            RobotTrack& track = it->second;
+            if (clearance < track.min_clearance)
+            {
+                track.min_clearance = clearance;
+            }
+        }
     }
 
 
@@ -398,9 +434,42 @@ public:
             tr.first_collision_pos = collision_pos;
         }
         
-        it->second.collided = true;
-        it->second.t_end = std::isnan(it->second.t_end) ? t : it->second.t_end;
+        tr.collided = true;
+        tr.t_end = std::isnan(tr.t_end) ? t : tr.t_end;
         total_collisions_ += 1; // count events; normalized rate uses collided robots fraction
+    }
+    
+    // Overloaded version that records collision event with density information
+    void markCollision(int robot_id, double t, const Eigen::Vector2d &collision_pos, 
+                      int collision_partner_id, bool is_robot_robot_collision,
+                      size_t total_robots_alive, size_t total_obstacles_alive)
+    {
+        // Call the original markCollision first
+        markCollision(robot_id, t, collision_pos);
+        
+        // Skip recording event if in warm-up period
+        if (isInWarmupPeriod(t))
+        {
+            return;
+        }
+        
+        // Calculate densities (robots/obstacles per unit area)
+        double robot_density = static_cast<double>(total_robots_alive) / area_eff;
+        double obstacle_density = static_cast<double>(total_obstacles_alive) / area_eff;
+        
+        // Record collision event
+        CollisionEvent event;
+        event.time = t;
+        event.position = collision_pos;
+        event.robot_id = robot_id;
+        event.collision_partner_id = collision_partner_id;
+        event.is_robot_robot_collision = is_robot_robot_collision;
+        event.robot_density = robot_density;
+        event.obstacle_density = obstacle_density;
+        event.total_robots_alive = total_robots_alive;
+        event.total_obstacles_alive = total_obstacles_alive;
+        
+        collision_events_.push_back(event);
     }
 
     // === OBSTACLE TRACKING API ===
@@ -515,10 +584,12 @@ public:
     // === Compute final results ===
     Results computeResults() const
     {
-        std::vector<double> distances, ldjs, detours;
+        std::vector<double> distances, ldjs, detours, min_clearances, baseline_paths;
         distances.reserve(tracks_.size());
         ldjs.reserve(tracks_.size());
         detours.reserve(tracks_.size());
+        min_clearances.reserve(tracks_.size());
+        baseline_paths.reserve(tracks_.size());
 
         size_t collided = 0;
 
@@ -538,6 +609,13 @@ public:
             if (tr.baseline_path_length > 1e-6)
             {
                 detours.push_back(L / tr.baseline_path_length); // >= 1.0
+                baseline_paths.push_back(tr.baseline_path_length);
+            }
+            
+            // Collect minimum clearance (avoid infinity values)
+            if (tr.min_clearance != std::numeric_limits<double>::max())
+            {
+                min_clearances.push_back(tr.min_clearance);
             }
 
             if (tr.collided)
@@ -548,6 +626,8 @@ public:
         R.distance_median_iqr = medianIQR(distances);
         R.ldj_median_iqr = medianIQR(ldjs);
         R.detour_ratio_median_iqr = medianIQR(detours); // Will be NaN if detours is empty
+        R.min_clearance_median_iqr = medianIQR(min_clearances); // Will be NaN if min_clearances is empty
+        R.baseline_path_median_iqr = medianIQR(baseline_paths); // Will be NaN if baseline_paths is empty
 
         size_t spawned = tracks_.size();
         R.robots_spawned = spawned;
@@ -651,7 +731,7 @@ public:
 
         // Write CSV header
         file << "robot_id,collided,t_start_s,t_end_s,t_first_collision_s,first_collision_pos_x_m,first_collision_pos_y_m,duration_s,"
-             << "path_length_m,baseline_path_length_m,detour_ratio,ldj,"
+             << "path_length_m,baseline_path_length_m,detour_ratio,ldj,min_clearance_m,"
              << "robot_encounters,obstacle_encounters,num_samples\n";
 
         // Write data for each robot
@@ -678,6 +758,7 @@ public:
                  << std::fixed << std::setprecision(6) << track.baseline_path_length << ","
                  << std::fixed << std::setprecision(6) << detour_ratio << ","
                  << std::fixed << std::setprecision(6) << ldj << ","
+                 << std::fixed << std::setprecision(6) << (track.min_clearance == std::numeric_limits<double>::max() ? std::numeric_limits<double>::quiet_NaN() : track.min_clearance) << ","
                  << track.robot_encounters << ","
                  << track.obstacle_encounters << ","
                  << track.samples.size() << "\n";
@@ -713,7 +794,8 @@ public:
              << "avg_robot_encounters_per_s,avg_obstacle_encounters_per_s,"
              << "total_obstacle_density,total_obstacle_crowdedness,"
              << "distance_median_m,distance_iqr_m,"
-             << "detour_ratio_median,detour_ratio_iqr,ldj_median,ldj_iqr\n";
+             << "detour_ratio_median,detour_ratio_iqr,ldj_median,ldj_iqr,"
+             << "min_clearance_median_m,min_clearance_iqr_m\n";
 
         // Generate timestamp
         auto now = std::chrono::system_clock::now();
@@ -739,9 +821,54 @@ public:
              << std::fixed << std::setprecision(6) << R.detour_ratio_median_iqr.median << ","
              << std::fixed << std::setprecision(6) << R.detour_ratio_median_iqr.iqr << ","
              << std::fixed << std::setprecision(6) << R.ldj_median_iqr.median << ","
-             << std::fixed << std::setprecision(6) << R.ldj_median_iqr.iqr << "\n";
+             << std::fixed << std::setprecision(6) << R.ldj_median_iqr.iqr << ","
+             << std::fixed << std::setprecision(6) << R.min_clearance_median_iqr.median << ","
+             << std::fixed << std::setprecision(6) << R.min_clearance_median_iqr.iqr << "\n";
 
         file.close();
+    }
+
+    // Export collision events to CSV
+    void exportCollisionEventsToCSV(const std::string &experiment_name = "") const
+    {
+        // Create results directory if it doesn't exist
+        std::filesystem::create_directories("results");
+
+        // Generate filename
+        std::string prefix = experiment_name.empty() ? "collisions" : experiment_name + "_collisions";
+        std::string filename = "results/" + generateTimestampedFilename(prefix, "csv");
+
+        std::ofstream file(filename);
+        if (!file.is_open())
+        {
+            std::cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
+            return;
+        }
+        
+        std::cout << "\nExporting collision events to " << filename << "...\n";
+
+        // Write CSV header
+        file << "time_s,robot_id,collision_partner_id,is_robot_robot_collision,"
+             << "collision_pos_x_m,collision_pos_y_m,robot_density_per_m2,obstacle_density_per_m2,"
+             << "total_robots_alive,total_obstacles_alive\n";
+
+        // Write data for each collision event
+        for (const auto &event : collision_events_)
+        {
+            file << std::fixed << std::setprecision(6) << event.time << ","
+                 << event.robot_id << ","
+                 << event.collision_partner_id << ","
+                 << (event.is_robot_robot_collision ? 1 : 0) << ","
+                 << std::fixed << std::setprecision(6) << event.position.x() << ","
+                 << std::fixed << std::setprecision(6) << event.position.y() << ","
+                 << std::fixed << std::setprecision(8) << event.robot_density << ","
+                 << std::fixed << std::setprecision(8) << event.obstacle_density << ","
+                 << event.total_robots_alive << ","
+                 << event.total_obstacles_alive << "\n";
+        }
+
+        file.close();
+        std::cout << "Collision events export completed (" << collision_events_.size() << " events).\n";
     }
 
     // Wrapper to export all at once
@@ -750,7 +877,8 @@ public:
         std::cout << "\nExporting metrics to CSV files...\n";
         // exportSamplesToCSV(experiment_name);
         exportSummaryToCSV(experiment_name);
-        exportExperimentMetricsToCSV(experiment_name);
+        // exportExperimentMetricsToCSV(experiment_name);
+        // exportCollisionEventsToCSV(experiment_name);
         std::cout << "CSV export completed.\n";
     }
 };
@@ -820,6 +948,10 @@ inline void printResults(const Results &R)
 
     printStat("Distance (median)", R.distance_median_iqr.median,
               R.distance_median_iqr.iqr, " m");
+    printStat("Baseline Path (median)", R.baseline_path_median_iqr.median,
+              R.baseline_path_median_iqr.iqr, " m");
+    printStat("Min Clearance (median)", R.min_clearance_median_iqr.median,
+              R.min_clearance_median_iqr.iqr, " m", 3);
     printStat("Detour Ratio (median)", R.detour_ratio_median_iqr.median,
               R.detour_ratio_median_iqr.iqr, "x", 3);
 

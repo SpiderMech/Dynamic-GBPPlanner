@@ -109,6 +109,11 @@ Robot::Robot(Simulator *sim, int rid,
         start << wp(0), wp(1), wp(2), wp(3);
     }
     position_ = start;
+    
+    // Initialize position trail with starting position (only if trails are enabled)
+    if (globals.DRAW_TRAILS) {
+        position_trail_.push_back(start.head<2>());
+    }
 
     // Check if starting waypoint is a task
     if (wp.size() == 5 && wp(4) > 0.0)
@@ -290,6 +295,15 @@ void Robot::updateCurrent()
         else
         {
             return;
+        }
+    }
+
+    // Store current position in trail before updating (only if trails are enabled)
+    if (globals.DRAW_TRAILS) {
+        position_trail_.push_back(position_.head<2>());
+        // Limit trail length
+        if (position_trail_.size() > MAX_TRAIL_LENGTH) {
+            position_trail_.pop_front();
         }
     }
 
@@ -515,6 +529,71 @@ void Robot::updateHorizon()
                 waypoints_.pop_front();
             }
         }
+    }
+}
+
+/***************************************************************************************************/
+// Detect slign shot states
+/***************************************************************************************************/
+bool Robot::isSlignshot() {
+    if (num_variables_ < 4) return false;
+    const auto p0 = getVar(0)->mu_.head<2>();
+    const auto pH = getVar(-1)->mu_.head<2>();
+    Eigen::Vector2d d = pH - p0;
+    const double L = d.norm();
+    if (L < 1e-6) return false; // degenerate
+    const Eigen::Vector2d u = d / L; // normalised direction
+
+    int beyond = 0; // count of vars ahead of horizon
+    int far_lateral = 0; // count of vars with large lateral error
+    const double tol_ahead = 0.5 * robot_radius_; // small ahead-of-horizon tolerance
+    const double tol_lateral = 7.0 * robot_radius_; // generous lateral deviation tolerance
+
+    for (int i = 1; i < num_variables_ - 1; ++i) {
+        const auto pi = getVar(i)->mu_.head<2>();
+        Eigen::Vector2d r = pi - p0;
+        double s = r.dot(u); // signed progress along u
+        double l = (r - s * u).norm();
+        if (s > L + tol_ahead) ++beyond;
+        if (l > tol_lateral && s > 0.25 * L) ++far_lateral;
+    }
+    return (beyond >= 2) || (far_lateral >= 3);
+}
+
+/***************************************************************************************************/
+// Reinitialise variable chain
+/***************************************************************************************************/
+void Robot::reinitialiseVariables(Eigen::Ref<const Eigen::Vector2d> anchor) {
+    const auto curr = getVar(0)->mu_;
+    const auto p0 = curr.head<2>();
+    const double dt = globals.T_HORIZON * globals.TIMESTEP;
+    Eigen::Vector2d disp = anchor - p0;
+    Eigen::Vector2d vel = disp / dt;
+    double spd = vel.norm();
+    if (spd > globals.MAX_SPEED) vel *= globals.MAX_SPEED / spd;
+
+    Eigen::VectorXd H(dofs_);
+    if (dofs_ == 4) {
+        H << anchor, vel;
+    } else if (dofs_ == 5) {
+        double th = vel_to_theta(vel.x(), vel.y(), curr(4));
+        H << anchor, vel, th;
+    } else {
+        double th = vel_to_theta(vel.x(), vel.y(), curr(4));
+        double dtheta = angle_diff(th, curr(4));
+        double total_time = getVar(-1)->ts_ * globals.T0;
+        double omega = dtheta / total_time;
+        H << anchor, vel, th, omega;
+    }
+
+    const auto H_prev = getVar(-1);
+    // Reinitialise all planned variables except v0 with linear interpolation
+    for (int i = 1; i < num_variables_; ++i) {
+        auto v = getVar(i);
+        float alpha = float(v->ts_) / float(H_prev->ts_);
+        Eigen::VectorXd mu = curr + (H - curr) * alpha;
+        if (dofs_ > 4) mu(4) = wrapAngle(mu(4));
+        v->change_variable_prior(mu);
     }
 }
 
@@ -808,6 +887,26 @@ void Robot::draw()
     {
         for (auto [fid, factor] : factors_)
             factor->draw();
+    }
+    
+    // Draw robot trail
+    if (globals.DRAW_TRAILS && position_trail_.size() > 1) {
+        // Draw trail as connected cylinders with fading alpha
+        for (size_t i = 0; i < position_trail_.size() - 1; ++i) {
+            const Eigen::Vector2d& pos1 = position_trail_[i];
+            const Eigen::Vector2d& pos2 = position_trail_[i + 1];
+            
+            // Calculate alpha based on position in trail (newer positions more opaque)
+            float alpha = 0.7f * (float(i + 1) / float(position_trail_.size()));
+            Color trail_color = ColorAlpha(color_, alpha);
+            
+            // Draw thick cylinder between consecutive positions
+            DrawCylinderEx(
+                Vector3{(float)pos1.x(), height_3D_ * 0.8f, (float)pos1.y()},
+                Vector3{(float)pos2.x(), height_3D_ * 0.8f, (float)pos2.y()},
+                0.3f, 0.3f, 8, trail_color
+            );
+        }
     }
     
     // Draw robots

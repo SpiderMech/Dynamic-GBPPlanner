@@ -41,6 +41,7 @@ class Globals {
     bool DRAW_FACTORS;                                      // Toggle display of factors
     bool DRAW_OBSTACLES = true;                             // Toggle display of obstacles
     bool DRAW_ROBOTS = true;                                // Toggle display of robots
+    bool DRAW_TRAILS = false;                               // Toggle display of robot trails
     
     // Simulation parameters
     int SEED;                                               // Random Seed 

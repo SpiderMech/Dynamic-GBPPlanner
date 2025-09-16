@@ -30,8 +30,8 @@ int main(int argc, char *argv[]){
         InitWindow(globals.SCREEN_SZ, globals.SCREEN_SZ, globals.WINDOW_TITLE);
     }
     
-    std::vector<int> seeds = {/*globals.SEED ,*/ globals.SEED + 1, globals.SEED + 2, globals.SEED + 3, /*globals.SEED + 4,
-                              globals.SEED + 5 , globals.SEED + 6, globals.SEED + 7, globals.SEED + 8, globals.SEED + 9*/};
+    std::vector<int> seeds = {globals.SEED ,globals.SEED + 1, globals.SEED + 2, globals.SEED + 3, globals.SEED + 4,
+                              globals.SEED + 5 , globals.SEED + 6, globals.SEED + 7, globals.SEED + 8, globals.SEED + 9};
     
     for (int seed_idx = 0; seed_idx < seeds.size(); seed_idx++) {
         int current_seed = seeds[seed_idx];
@@ -56,7 +56,7 @@ int main(int argc, char *argv[]){
         if (globals.EVAL) {
             auto R = sim->metrics->computeResults();
             printResults(R);
-            sim->metrics->exportAllCSV(experiment_name);
+            // sim->metrics->exportAllCSV(experiment_name);
         }
         
         delete sim;

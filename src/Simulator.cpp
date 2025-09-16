@@ -320,7 +320,21 @@ void Simulator::eventHandler()
 // Set up environment related structures based on formation
 /*******************************************************************************/
 void Simulator::setupEnvironment() {
-    if (globals.FORMATION == "junction_twoway") {
+    if (globals.FORMATION == "playground" || globals.FORMATION == "circle") {
+        double simulation_start_time = clock_ * globals.TIMESTEP;
+        metrics = new MetricsCollector(simulation_start_time);
+        metrics->enableFlow(false);
+        metrics->setWarmupTime(0.0);
+
+        std::vector<ObstacleType> obs_types = {ObstacleType::BUS, ObstacleType::VAN, ObstacleType::PEDESTRIAN};
+        std::unordered_map<ObstacleType, double> obs_areas;
+        for (const auto& type : obs_types) {
+            auto dims = graphics->obstacleModels_[type]->dimensions;
+            obs_areas[type] = dims.x * dims.z;
+        }
+        metrics->setObstacleAreas(obs_areas);
+
+    } else if (globals.FORMATION == "junction_twoway") {
         const int n_zones = 4; // One zone for each road
         spawn_gates_.clear();
         for (int i = 0; i < n_zones; ++i) {
@@ -379,7 +393,6 @@ void Simulator::setupEnvironment() {
             }
             metrics->setObstacleAreas(obs_areas);
         }
-        
     }
 }
 
@@ -393,6 +406,8 @@ void Simulator::createOrDeleteRobots()
     if (!new_robots_needed_ || !(globals.SIM_MODE == Iterate || globals.SIM_MODE == Timestep))
         return;
 
+    double now = clock_ * globals.TIMESTEP;
+
     std::vector<std::shared_ptr<Robot>> robots_to_create{};
     std::vector<std::shared_ptr<Robot>> robots_to_delete{};
     Eigen::VectorXd starting, turning, ending; // Waypoints : [x,y,xdot,ydot].
@@ -401,15 +416,37 @@ void Simulator::createOrDeleteRobots()
     {
         new_robots_needed_ = globals.NEW_ROBOTS_NEEDED;
 
-        std::deque<Eigen::VectorXd> wps1{
-            Eigen::VectorXd{{25.0, 0.0, 0.0, -(double)globals.MAX_SPEED, 0.0}},
-            Eigen::VectorXd{{-25.0, 0.0, 0.0,-(double)globals.MAX_SPEED, 0.0}}};
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, GREEN));
+        // std::deque<Eigen::VectorXd> wps1{
+        //     Eigen::VectorXd{{25.0, 0.0, 0.0, -(double)globals.MAX_SPEED, 0.0}},
+        //     Eigen::VectorXd{{-25.0, 0.0, 0.0,-(double)globals.MAX_SPEED, 0.0}}};
+        // robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps1, RobotType::SPHERE, 1.f, globals.ROBOT_RADIUS, GREEN));
 
+        RobotType type = globals.N_DOFS == 4 ? RobotType::SPHERE : RobotType::CAR;
+        std::deque<Eigen::VectorXd> wps1{
+            Eigen::VectorXd{{-25.0, -7.5, (double)globals.MAX_SPEED, 0.0, 0.0}},
+            Eigen::VectorXd{{ 25.0, -7.5, (double)globals.MAX_SPEED, 0.0, 0.0}}};
+        auto r1 = std::make_shared<Robot>(this, next_rid_++, wps1, type, 1.f, globals.ROBOT_RADIUS, ColorFromHSV(0, 1., 0.75));
+        robots_to_create.push_back(r1);
+        
         std::deque<Eigen::VectorXd> wps2{
-            Eigen::VectorXd{{-25.0, 0.0, (double)globals.MAX_SPEED, 0.0, 0.0}},
-            Eigen::VectorXd{{ 25.0, 0.0, (double)globals.MAX_SPEED, 0.0, 0.0}}};
-        robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, wps2, RobotType::CAR, 1.f, globals.ROBOT_RADIUS, RED));
+            Eigen::VectorXd{{-25.0, -2.5, (double)globals.MAX_SPEED, 0.0, 0.0}},
+            Eigen::VectorXd{{ 25.0, -2.5, (double)globals.MAX_SPEED, 0.0, 0.0}}};
+        auto r2 = std::make_shared<Robot>(this, next_rid_++, wps2, type, 1.f, globals.ROBOT_RADIUS, ColorFromHSV(90., 1., 0.75));
+        robots_to_create.push_back(r2);
+        
+        std::deque<Eigen::VectorXd> wps3{
+            Eigen::VectorXd{{-25.0, 2.5, (double)globals.MAX_SPEED, 0.0, 0.0}},
+            Eigen::VectorXd{{ 25.0, 2.5, (double)globals.MAX_SPEED, 0.0, 0.0}}};
+        auto r3 = std::make_shared<Robot>(this, next_rid_++, wps3, type, 1.f, globals.ROBOT_RADIUS, ColorFromHSV(180., 1., 0.75));
+        robots_to_create.push_back(r3);
+        metrics->setBaselinePathLength(r3->rid_, r3->base_path_length_-4.26);
+        
+        std::deque<Eigen::VectorXd> wps4{
+            Eigen::VectorXd{{-25.0, 7.5, (double)globals.MAX_SPEED, 0.0, 0.0}},
+            Eigen::VectorXd{{ 25.0, 7.5, (double)globals.MAX_SPEED, 0.0, 0.0}}};
+        auto r4 = std::make_shared<Robot>(this, next_rid_++, wps4, type, 1.f, globals.ROBOT_RADIUS, ColorFromHSV(270., 1., 0.75));
+        robots_to_create.push_back(r4);
+        metrics->setBaselinePathLength(r4->rid_, r4->base_path_length_-4.26);
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -447,8 +484,9 @@ void Simulator::createOrDeleteRobots()
     {
         // Robots must travel to opposite sides of circle
         new_robots_needed_ = false;
+        RobotType type = globals.N_DOFS == 4 ? RobotType::SPHERE : RobotType::CAR;
         float min_circumference_spacing = 5. * globals.ROBOT_RADIUS;
-        double min_radius = 0.25 * globals.WORLD_SZ;
+        double min_radius = 0.35 * globals.WORLD_SZ;
         Eigen::VectorXd centre{{0., 0., 0., 0., 0.}};
         for (int i = 0; i < globals.NUM_ROBOTS; i++)
         {
@@ -464,7 +502,7 @@ void Simulator::createOrDeleteRobots()
             // Define robot radius and colour here.
             float robot_radius = globals.ROBOT_RADIUS;
             Color robot_color = ColorFromHSV(i * 360. / (float)globals.NUM_ROBOTS, 1., 0.75);
-            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, RobotType::SPHERE, 1.f, robot_radius, robot_color));
+            robots_to_create.push_back(std::make_shared<Robot>(this, next_rid_++, waypoints, type, 1.f, robot_radius, robot_color));
         }
     }
 
@@ -545,6 +583,10 @@ void Simulator::createOrDeleteRobots()
     {
         robot_positions_[robot->rid_] = std::vector<double>{robot->waypoints_[0](0), robot->waypoints_[0](1)};
         robots_[robot->rid_] = robot;
+        if (globals.EVAL && metrics) {
+            metrics->addSample(robot->rid_, now, robot->position_.head<2>());
+            metrics->setBaselinePathLength(robot->rid_, robot->base_path_length_-4.26);
+        }
     };
 
     for (auto robot : robots_to_delete)
@@ -568,19 +610,38 @@ void Simulator::createOrDeleteObstacles()
     if (globals.FORMATION == "playground")
     {
         new_obstacles_needed_ = globals.NEW_OBSTACLES_NEEDED;
-        std::deque<Eigen::VectorXd> wps;
-        // Eigen::VectorXd wp1(5), wp2(5), wp3(5), wp4(5);
-        Eigen::VectorXd wp1(5);
-        wp1 << 0., 1.5, 0., -1., 0.;
-        // wp2 <<   0., -5., 1., 0., 0.;
-        // wp3 <<   0.,  5., 0., 1., 0.;
-        // wp4 << -10.,  5., -1., 0., 0.;
-        // wps = {wp1, wp2, wp3, wp4};
-        wps = {wp1};
-        auto model = graphics->obstacleModels_[ObstacleType::VAN];
+
+        // std::deque<Eigen::VectorXd> wps1{
+        //     Eigen::VectorXd{{ 0.0, -25.0, 0.0, (double)globals.MAX_SPEED, 0.0}},
+        //     Eigen::VectorXd{{ 0.0,  25.0, 0.0, (double)globals.MAX_SPEED, 0.0}}};
         // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
-        auto obs = std::make_shared<DynamicObstacle>(next_oid_++, wps, model);
-        obs_to_create.push_back(obs);
+        // auto obs1 = std::make_shared<DynamicObstacle>(next_oid_++, wps1, model);
+        // if (globals.EVAL && metrics) {
+        //     metrics->addObstacleSpawn(obs1->oid_, ObstacleType::CUBE, clock_ * globals.TIMESTEP);
+        // }
+        // obs_to_create.push_back(obs1);
+        
+        auto model = graphics->obstacleModels_[ObstacleType::BUS];
+        std::deque<Eigen::VectorXd> wps1{
+            Eigen::VectorXd{{ 0.0,  15.0, 0.0, -(double)globals.MAX_SPEED, 0.0}},
+            Eigen::VectorXd{{ 0.0, -15.0, 0.0, -(double)globals.MAX_SPEED, 0.0}}};
+        // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
+        auto obs1 = std::make_shared<DynamicObstacle>(next_oid_++, wps1, model);
+        if (globals.EVAL && metrics) {
+            metrics->addObstacleSpawn(obs1->oid_, ObstacleType::BUS, clock_ * globals.TIMESTEP);
+        }
+        obs_to_create.push_back(obs1);
+        
+        std::deque<Eigen::VectorXd> wps2{
+            Eigen::VectorXd{{ 0.0,  30.0, 0.0, -(double)globals.MAX_SPEED, 0.0}},
+            Eigen::VectorXd{{ 0.0, -30.0, 0.0, -(double)globals.MAX_SPEED, 0.0}}};
+        // auto model = graphics->obstacleModels_[ObstacleType::VAN];
+        // auto model = graphics->createBoxObstacleModel(5.f, 5.f, 5.f, 0.0);
+        auto obs2 = std::make_shared<DynamicObstacle>(next_oid_++, wps2, model);
+        if (globals.EVAL && metrics) {
+            metrics->addObstacleSpawn(obs2->oid_, ObstacleType::BUS, clock_ * globals.TIMESTEP);
+        }
+        obs_to_create.push_back(obs2);
     }
 
     else if (globals.FORMATION == "layered_walls")
@@ -637,7 +698,7 @@ void Simulator::createOrDeleteObstacles()
             // Depends on omega
             int size = 100;
             // Since Y increases downwards, omegas need to be negated for anti-clockwise motion
-            std::vector<float> radii = {13.1f, 9.2f, 6.7f};
+            std::vector<float> radii = {15.1f, 11.2f, 9.7f};
             std::vector<float> phase_offsets = {-std::atan2(10.f, 8.5f), std::atan2(7.f, -6.f), -std::atan2(6.5f, -1.5f)};
             std::vector<float> omegas = {-0.1f, -0.1f, -0.1f};
 
@@ -797,8 +858,11 @@ void Simulator::deleteRobot(std::shared_ptr<Robot> robot)
     auto connected_rids_copy = robot->connected_r_ids_;
     for (auto r : connected_rids_copy)
     {
-        robot->deleteInterrobotFactors(robots_.at(r));
-        robots_.at(r)->deleteInterrobotFactors(robot);
+        auto it = robots_.find(r);
+        if (it != robots_.end()) {
+            robot->deleteInterrobotFactors(robots_.at(r));
+            robots_.at(r)->deleteInterrobotFactors(robot);
+        }
     }
     robots_.erase(robot->rid_);
     robot_positions_.erase(robot->rid_);
@@ -834,6 +898,9 @@ void Simulator::detectCollisions()
         Eigen::Vector2d vel_i = robot_i->position_.segment<2>(2);
         double radius_i = robot_i->robot_radius_;
         double query_radius = radius_i + dt * vel_i.norm();
+        
+        // Track minimum clearance for this robot
+        double min_clearance_this_step = std::numeric_limits<double>::max();
 
         // KD-tree radius search
         std::vector<double> query_pt = {pos_i.x(), pos_i.y()};
@@ -860,6 +927,25 @@ void Simulator::detectCollisions()
             Eigen::Vector2d vel_j = robot_j->position_.segment<2>(2);
             double radius_j = robot_j->robot_radius_;
             double distance = (pos_j - pos_i).norm();
+            
+            // Calculate signed distance for clearance tracking
+            double signed_distance;
+            if (robots_are_spheres) {
+                // For spheres, signed distance is center distance minus combined radii
+                signed_distance = distance - (radius_i + radius_j);
+            } else {
+                // For OBBs, use the proper signed distance function
+                double theta_i = wrapAngle(robot_i->orientation_ + robot_i->default_angle_offset_);
+                double theta_j = wrapAngle(robot_j->orientation_ + robot_j->default_angle_offset_);
+                OBB2D obb_i(pos_i, robot_i->robot_dimensions_ * 0.5, theta_i);
+                OBB2D obb_j(pos_j, robot_j->robot_dimensions_ * 0.5, theta_j);
+                signed_distance = GeometryUtils::signedDistanceOBB(obb_i, obb_j);
+            }
+            
+            // Update minimum clearance (includes negative values for overlaps)
+            if (signed_distance < min_clearance_this_step) {
+                min_clearance_this_step = signed_distance;
+            }
             
             // Calculate interaction radius for this neighbor pair
             double R_in;
@@ -910,8 +996,14 @@ void Simulator::detectCollisions()
                 // Mark collision for both robots
                 Eigen::Vector2d collision_pos = (pos_i + pos_j) * 0.5;  // Midpoint of collision
                 seen_collision_pairs_.insert(pair_id);
-                metrics->markCollision(rid_i, now, collision_pos);
-                metrics->markCollision(rid_j, now, collision_pos);
+                
+                // Get current robot and obstacle counts for density calculation
+                size_t total_robots_alive = robots_.size();
+                size_t total_obstacles_alive = obstacles_.size();
+                
+                // Mark collision with density information for both robots
+                metrics->markCollision(rid_i, now, collision_pos, rid_j, true, total_robots_alive, total_obstacles_alive);
+                // metrics->markCollision(rid_j, now, collision_pos, rid_i, true, total_robots_alive, total_obstacles_alive);
                 // Debug
                 bool connected = std::find(robot_i->connected_r_ids_.begin(), robot_i->connected_r_ids_.end(), rid_j) != robot_i->connected_r_ids_.end();
                 printf("CollisionEvent<Robot, Robot, %f>: ids=[%d, %d], pos1=[%f, %f], pos2=[%f, %f], comms_active=[%d, %d], connected=[%d]\n", 
@@ -924,10 +1016,17 @@ void Simulator::detectCollisions()
         } 
         // Update robot encounters inside set for this robot
         track.robots_inside.swap(new_robots_inside);
+        
+        // Update minimum clearance for this robot after checking all other robots
+        if (min_clearance_this_step != std::numeric_limits<double>::max()) {
+            metrics->updateMinClearance(rid_i, min_clearance_this_step);
+        }
     }
     
     // Loop 2: Robot-Obstacle collisions and encounters
     std::unordered_map<int, std::unordered_set<int>> all_new_obstacle_encounters;
+    std::unordered_map<int, double> robot_obstacle_clearances;  // Track min clearance from obstacles per robot
+    
     for (const auto& [oid, obs] : obstacles_) {
         // obs->color_ = GRAY;
         Eigen::Vector2d c = obs->state_.head<2>();
@@ -940,7 +1039,7 @@ void Simulator::detectCollisions()
 
         // KD-tree radius search
         std::vector<double> query_pt = {c.x(), c.y()};
-        const float search_radius_sq = std::pow(obs_bounding_radius * 3.0, 2.0); // Extra margin for safety
+        const float search_radius_sq = std::pow(obs_bounding_radius * 20.0, 2.0); // Extra margin for safety
         std::vector<nanoflann::ResultItem<size_t, double>> matches;
         nanoflann::SearchParameters params;
         params.sorted = false;
@@ -948,13 +1047,31 @@ void Simulator::detectCollisions()
 
         for (size_t k = 0; k < nMatches; k++) {
             // Get the matched robot's ID
-            auto it = robots_.begin();
-            std::advance(it, matches[k].first);
-            int rid = it->first;
+            auto robot_it = robots_.begin();
+            std::advance(robot_it, matches[k].first);
+            int rid = robot_it->first;
             auto robot = robots_.at(rid);
             auto robot_pos = robot->position_.head<2>();
             auto robot_radius = robot->robot_radius_;
             double distance = (robot_pos - c).norm();
+            
+            // Calculate signed distance for clearance tracking
+            double signed_distance;
+            if (robots_are_spheres) {
+                // For sphere-OBB, use the signed distance function
+                signed_distance = GeometryUtils::signedDistanceSphereOBB(robot_pos, robot_radius, obs_obb);
+            } else {
+                // For OBB-OBB, use the signed distance function
+                double robot_theta = wrapAngle(robot->orientation_ + robot->default_angle_offset_);
+                OBB2D robot_obb(robot_pos, robot->robot_dimensions_ * 0.5, robot_theta);
+                signed_distance = GeometryUtils::signedDistanceOBB(robot_obb, obs_obb);
+            }
+            
+            // Update minimum clearance from obstacles (includes negative values for overlaps)
+            auto clearance_it = robot_obstacle_clearances.find(rid);
+            if (clearance_it == robot_obstacle_clearances.end() || signed_distance < clearance_it->second) {
+                robot_obstacle_clearances[rid] = signed_distance;
+            }
             
             // Detect encounters
             auto& track = metrics->getTrack(rid);
@@ -1003,7 +1120,13 @@ void Simulator::detectCollisions()
                 // Mark robot-obstacle collision
                 // For robot-obstacle collisions, use the robot position as collision position
                 seen_collision_pairs_.insert(pair_id);
-                metrics->markCollision(rid, now, robot_pos);  
+                
+                // Get current robot and obstacle counts for density calculation
+                size_t total_robots_alive = robots_.size();
+                size_t total_obstacles_alive = obstacles_.size();
+                
+                // Mark collision with density information (negative obstacle ID for distinction)
+                metrics->markCollision(rid, now, robot_pos, -oid, false, total_robots_alive, total_obstacles_alive);
                 // Debug                 
                 printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f], theta_o=[%f]\n", now, rid, oid, robot_pos.x(), robot_pos.y(), o);
                 obs->color_ = RED;
@@ -1016,6 +1139,11 @@ void Simulator::detectCollisions()
     for (auto& [rid, new_inside] : all_new_obstacle_encounters) {
         auto& track = metrics->getTrack(rid);
         track.obstacles_inside.swap(new_inside);
+    }
+    
+    // Update minimum clearances from obstacles for all robots
+    for (const auto& [rid, obstacle_clearance] : robot_obstacle_clearances) {
+        metrics->updateMinClearance(rid, obstacle_clearance);
     }
 }
 
