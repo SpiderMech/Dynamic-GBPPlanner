@@ -7,8 +7,8 @@
 原版项目主页: https://aalpatya.github.io/gbpplanner
 
 <p align="center">
-  <img src="https://github.com/aalpatya/gbpplanner/blob/084c94e842f1f725cb6cde1e63115e152b12b769/assets/github_media/gbpplanner_circle.gif">
-  <img src="https://github.com/aalpatya/gbpplanner/blob/084c94e842f1f725cb6cde1e63115e152b12b769/assets/github_media/gbpplanner_junction.gif">
+  <img src="assets/github_media/dynamic_circle.gif" width="25%">
+  <img src="assets/github_media/dynacmic_junction.gif" width="25%">
 </p>
 
 **核心改进**：
@@ -136,11 +136,6 @@ make
 This project extends **GBPPlanner: Distributing Multi-Robot Collaboration with Gaussian Belief Propagation** with new capabilities for **dynamic obstacle avoidance** and **anisotropic robot geometries**.
 
 Original project page: https://aalpatya.github.io/gbpplanner
-
-<p align="center">
-  <img src="https://github.com/aalpatya/gbpplanner/blob/084c94e842f1f725cb6cde1e63115e152b12b769/assets/github_media/gbpplanner_circle.gif">
-  <img src="https://github.com/aalpatya/gbpplanner/blob/084c94e842f1f725cb6cde1e63115e152b12b769/assets/github_media/gbpplanner_junction.gif">
-</p>
 
 **Key Enhancements**:
 - ✅ **Dynamic Obstacle Avoidance**: Implements dynamic repulsion field model based on RBF kernel functions for smooth local avoidance of moving obstacles
