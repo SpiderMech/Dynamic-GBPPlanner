@@ -46,8 +46,8 @@ DynamicObstacle::DynamicObstacle(int oid,
 
     // Initialise current covariance and roll forward
     P_curr_.setZero();
-    const double s_pos0 = 0.0002; // [m]
-    const double s_vel0 = 0.0005; // [m/s]
+    const double s_pos0 = 0.2; // [m]
+    const double s_vel0 = 0.5; // [m/s]
     const double sp2 = s_pos0 * s_pos0, sv2 = s_vel0*s_vel0;
     P_curr_(0, 0) = sp2; P_curr_(1, 1) = sp2;
     P_curr_(2, 2) = sv2; P_curr_(3, 3) = sv2;

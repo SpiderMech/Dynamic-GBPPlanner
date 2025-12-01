@@ -437,7 +437,7 @@ InterrobotFactor::InterrobotFactor(int f_id, int r_id, std::vector<std::shared_p
     }
 
     if (n_dofs >= 5) {
-        this->safety_distance_ = 1.2;
+        this->safety_distance_ = 1.5;
     } else {
         float eps = 0.2 * robot_radius;
         this->safety_distance_ = 2 * robot_radius + eps;
@@ -828,8 +828,8 @@ double projectedVariance(const Eigen::Matrix2d *Sigma_k, const Eigen::Vector2d &
 double gammaEff(const Eigen::Matrix2d *Sigma, const Eigen::Vector2d &diff)
 { /* Get the effective gamma for obstacle timestep k */
     const double s_nom2 = sigmaNominalSq();
-    const double s_obs2 = projectedVariance(Sigma, diff);
-    const double s_eff2 = s_nom2 + s_obs2;
+    // const double s_obs2 = std::min(1.0, projectedVariance(Sigma, diff));
+    const double s_eff2 = s_nom2/* + s_obs2*/;
     return 1.0 / (2.0 * std::max(1e-12, s_eff2));
 }
 

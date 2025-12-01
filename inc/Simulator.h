@@ -91,6 +91,8 @@ public:
     PoissonSpawner pedestrian_spawner_;                          // Pedestrian obstacle spawner
     std::unordered_set<uint64_t> seen_collision_pairs_;         // Track seen collision pairs
 
+    int frame_count = 0;                                        // Frame count for GIF capture
+
     /*******************************************************************************/
     // Set up environment related structures based on formation
     /*******************************************************************************/

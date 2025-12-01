@@ -54,7 +54,7 @@ struct SpawnGate {
             }
 
             if (!isClear(top, space_margin)) {
-                auto r = top; r.t_req = now + 0.2;
+                auto r = top; r.t_req = now + 1.0;
                 pq.pop(); pq.push(r);
                 continue;
             }

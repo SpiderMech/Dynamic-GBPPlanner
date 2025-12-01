@@ -52,6 +52,8 @@ Simulator::Simulator()
     // However for calculation purposes the image needs to be inverted.
     ImageColorInvert(&obstacleImg);
     graphics = new Graphics(obstacleImg);
+
+    int frame_count = 0;
 };
 
 /*******************************************************************************/
@@ -96,6 +98,11 @@ void Simulator::draw()
         EndMode3D();
         draw_info(clock_);
     EndDrawing();
+
+    if (globals.CAPTURE_GIF) {
+        TakeScreenshot(TextFormat("../assets/frames/frame_%04d.png", frame_count++));
+        frame_count++;
+    }
 };
 
 /*******************************************************************************/
@@ -295,6 +302,9 @@ void Simulator::eventHandler()
             globals.LAST_SIM_MODE = (globals.SIM_MODE == Iterate) ? globals.LAST_SIM_MODE : Iterate;
             globals.SIM_MODE = (globals.SIM_MODE == Iterate) ? globals.LAST_SIM_MODE : Iterate;
         }
+        break;
+    case KEY_G:
+        globals.CAPTURE_GIF = !globals.CAPTURE_GIF;
         break;
     case KEY_ENTER:
         globals.SIM_MODE = (globals.SIM_MODE == Timestep) ? SimNone : globals.LAST_SIM_MODE;
@@ -695,32 +705,45 @@ void Simulator::createOrDeleteObstacles()
         
         if (!obstacles_initialised_)
         {
-            // Depends on omega
+            // Create 5 rows of circular obstacles
             int size = 100;
             // Since Y increases downwards, omegas need to be negated for anti-clockwise motion
-            std::vector<float> radii = {15.1f, 11.2f, 9.7f};
-            std::vector<float> phase_offsets = {-std::atan2(10.f, 8.5f), std::atan2(7.f, -6.f), -std::atan2(6.5f, -1.5f)};
-            std::vector<float> omegas = {-0.1f, -0.1f, -0.1f};
+            std::vector<float> radii = {18.0f, 15.0f, 9.0f, 7.0f, 3.0f};
+            std::vector<float> phase_offsets = {
+                -std::atan2(10.f, 8.5f),    // Row 1
+                std::atan2(7.f, -6.f),      // Row 2
+                -std::atan2(6.5f, -1.5f),   // Row 3
+                std::atan2(4.f, 3.f),       // Row 4
+                -std::atan2(2.f, -5.f)      // Row 5
+            };
+            std::vector<float> omegas = {-0.15f, -0.09f, -0.1f, -0.18f, -0.12f}; // Different speeds for each row
 
-            // Cuboids1
-            Eigen::VectorXd mo1_wp(5), mo2_wp(5), mo3_wp(5);
-            mo1_wp << 8.5, -10., 0., 0., 0.;
-            mo2_wp << -6.0, 7.0, 0., 0., 0.;
-            mo3_wp << -1.5, -6.5, 0., 0., 0.;
+            // Initial positions for 5 rows
+            std::vector<Eigen::VectorXd> initial_positions(5, Eigen::VectorXd(5));
+            initial_positions[0] << 8.5, -10., 0., 0., 0.;   // Row 1
+            initial_positions[1] << -6.0, 7.0, 0., 0., 0.;   // Row 2
+            initial_positions[2] << -1.5, -6.5, 0., 0., 0.;  // Row 3
+            initial_positions[3] << 4.0, 3.0, 0., 0., 0.;    // Row 4
+            initial_positions[4] << -5.0, -2.0, 0., 0., 0.;  // Row 5
 
-            auto mo1 = MotionOptions(3.f, 5.f, 6.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{mo1_wp});
-            auto mo2 = MotionOptions(4.f, 4.f, 4.f, 2.0f, 0, graphics, std::deque<Eigen::VectorXd>{mo2_wp});
-            auto mo3 = MotionOptions(3.f, 5.f, 3.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{mo3_wp});
+            // Create motion options with varying dimensions for diversity
+            std::vector<MotionOptions> motion_opts;
+            // motion_opts.emplace_back(3.f, 5.f, 6.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{initial_positions[0]});
+            // motion_opts.emplace_back(4.f, 4.f, 4.f, 2.0f, 0, graphics, std::deque<Eigen::VectorXd>{initial_positions[1]});
+            motion_opts.emplace_back(3.f, 5.f, 3.f, 2.5f, 0, graphics, std::deque<Eigen::VectorXd>{initial_positions[2]});
+            motion_opts.emplace_back(3.5f, 4.5f, 5.f, 2.2f, 0, graphics, std::deque<Eigen::VectorXd>{initial_positions[3]});
+            motion_opts.emplace_back(4.5f, 3.5f, 4.5f, 2.3f, 0, graphics, std::deque<Eigen::VectorXd>{initial_positions[4]});
+            
+            motion_options_ = motion_opts;
 
-            motion_options_ = {mo1, mo2, mo3};
-
+            // Generate circular waypoints for each of the 5 rows
             for (int i = 0; i < motion_options_.size(); ++i)
             {
                 std::deque<Eigen::VectorXd> waypoints;
-                float omega = (2.f * PI) / size;
+                // float omega = (2.f * PI) / size;
                 for (int j = 0; j < size; ++j)
                 {
-                    float theta = phase_offsets[i] + omega * j;
+                    float theta = phase_offsets[i] + omegas[i] * j;
                     float x = radii[i] * std::cos(theta);
                     float y = radii[i] * std::sin(theta);
                     float vx = -radii[i] * omegas[i] * std::sin(theta);
@@ -1008,8 +1031,8 @@ void Simulator::detectCollisions()
                 bool connected = std::find(robot_i->connected_r_ids_.begin(), robot_i->connected_r_ids_.end(), rid_j) != robot_i->connected_r_ids_.end();
                 printf("CollisionEvent<Robot, Robot, %f>: ids=[%d, %d], pos1=[%f, %f], pos2=[%f, %f], comms_active=[%d, %d], connected=[%d]\n", 
                     now, rid_i, rid_j, pos_i.x(), pos_i.y(), pos_j.x(), pos_j.y(), (int)robot_i->interrobot_comms_active_, (int)robot_j->interrobot_comms_active_, connected);
-                robot_i->color_ = RED;
-                robot_j->color_ = RED;
+                // robot_i->color_ = RED;
+                // robot_j->color_ = RED;
                 // globals.LAST_SIM_MODE = Iterate;
                 // globals.SIM_MODE = SimNone;
             }
@@ -1129,8 +1152,8 @@ void Simulator::detectCollisions()
                 metrics->markCollision(rid, now, robot_pos, -oid, false, total_robots_alive, total_obstacles_alive);
                 // Debug                 
                 printf("CollisionEvent<Robot, Obstacle, %f>: ids=[%d, %d], pos=[%f, %f], theta_o=[%f]\n", now, rid, oid, robot_pos.x(), robot_pos.y(), o);
-                obs->color_ = RED;
-                robot->color_ = RED;
+                // obs->color_ = RED;
+                // robot->color_ = RED;
                 // globals.LAST_SIM_MODE = Iterate;
                 // globals.SIM_MODE = SimNone;
             }
@@ -1167,6 +1190,7 @@ bool Simulator::isSpawnClear(const SpawnRequest& r, double margin) {
             auto it = this->robots_.begin();
             std::advance(it, matches[k].first);
             auto match = it->second;
+         
             const bool robot_are_spheres = match->robot_type_ == RobotType::SPHERE;
             const auto match_pos = match->position_.head<2>();
             const auto match_dims = match->robot_dimensions_;

@@ -54,7 +54,7 @@ public:
 private:
     Eigen::Matrix4d P_curr_ = Eigen::Matrix4d::Zero(); // State covariance at current tick (x, y, vx, vy)
     std::map<int, Eigen::Matrix2d> pos_covariances_;   // Lookahead timestep position covariance (same index as states_)
-    double sigma_acc_ = 0.0001;                         // White-noise acceleration [m/s^2]
+    double sigma_acc_ = 0.1;                           // White-noise acceleration [m/s^2]
 
     // Discrete constant-velocity model matrices
     static Eigen::Matrix4d Fcv(double dt) {             

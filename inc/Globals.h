@@ -71,7 +71,8 @@ class Globals {
     float SIGMA_FACTOR_DYNAMIC_OBSTACLE;                    // Sigma for Dynamic obstacle factors
     int NUM_ITERS;                                          // Number of iterations of GBP per timestep
     float DAMPING = 0.;                                     // Damping amount (not used in this work)
-    bool USE_DYNAMIC_OBS_FAC = true;                        // Flag for using dynamic obstacle factor                               
+    bool USE_DYNAMIC_OBS_FAC = true;                        // Flag for using dynamic obstacle factor   
+    bool CAPTURE_GIF = false;                               // Flag for capturing GIF of simulation
 
     // Dynamic Obstacle parameters
     double RBF_GAMMA;                               // Shape parameter of Gaussian RBFs of obstacle points (gamma = 1/2*sigma^2)
